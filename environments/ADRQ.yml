@@ -1,0 +1,30 @@
+name: ADRQ
+# Base environment for the Auto-Daily-Rainfall QC work.
+channels:
+  - conda-forge
+dependencies:
+# Basics
+  - python=3.10
+  - matplotlib=3.10
+  - black  # Code formatter
+  - sphinx  # Documentation
+# Better JSON
+  - json5  
+# Data storage in SQLite
+  - sqlite=3.53
+
+# Some stuff is pip-only
+  - pip
+  - pip:
+      - ipykernel  # Jupyter kernel - to use this environment in notebooks
+      - pymilvus[milvus_lite] # Vector DB for fast search
+
+variables:
+# Tell python to look for modules in the root directory of the project
+# (A hack, needs to be edited for every installation, but makes code
+#  management much easier.)
+# Replace with the path to your project directory root.
+  PYTHONPATH: /home/users/philip.brohan/Projects/Auto-Daily-Rainfall-QC-MO
+
+# Project data path
+  PDIR: /data/scratch/philip.brohan/ADRQ
