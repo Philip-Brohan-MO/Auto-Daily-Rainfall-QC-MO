@@ -6,6 +6,7 @@ dependencies:
 # Basics
   - python=3.10
   - matplotlib=3.10
+  - cartopy  # Maps for diagnostic figures
   - black  # Code formatter
   - sphinx  # Documentation
 # Better JSON
