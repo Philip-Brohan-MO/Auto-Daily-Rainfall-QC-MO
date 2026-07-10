@@ -17,6 +17,9 @@ import numpy as np
 from .comparison_schema import rebuild_schema
 
 MONTHS = tuple(range(1, 13))
+EXACT_MATCH_DECIMALS = 2
+EXACT_MATCH_TOLERANCE = 0.015  # midpoint between 0.01 and 0.02; captures values ≤0.01 apart after rounding to 2dp
+RANKING_METHOD_EXACT_ANY_MEMBER = "exact_agreement_any_member_round2_tol01"
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,7 @@ CREATE TABLE shard_matches (
     ensemble_vector_id TEXT NOT NULL,
     rr_vector_id TEXT NOT NULL,
     overlap_months INTEGER NOT NULL,
+    exact_agreement_count INTEGER NOT NULL,
     cosine_similarity REAL NOT NULL,
     adjusted_score REAL NOT NULL,
     ensemble_uncertainty REAL
@@ -104,6 +108,7 @@ CREATE TABLE shard_meta (
     top_k INTEGER NOT NULL,
     min_overlap INTEGER NOT NULL,
     uncertainty_weight REAL NOT NULL,
+    ranking_method TEXT NOT NULL,
     matches_written INTEGER NOT NULL,
     started_at TEXT NOT NULL,
     completed_at TEXT NOT NULL
@@ -431,6 +436,39 @@ def build_comparison_vectors(
                 ),
             )
 
+            with sqlite3.connect(f"file:{ensemble_db_path}?immutable=1", uri=True) as src:
+                rows = src.execute(
+                    """
+                    SELECT
+                        file_id,
+                        month,
+                        ensemble_member,
+                        total
+                    FROM ensemble_monthly_totals
+                    ORDER BY file_id, month, ensemble_member
+                    """
+                )
+                conn.executemany(
+                    """
+                    INSERT INTO ensemble_member_monthly_values(
+                        ensemble_vector_id,
+                        month,
+                        ensemble_member,
+                        total
+                    )
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    (
+                        (
+                            f"ensemble_file::{int(row[0])}",
+                            int(row[1]),
+                            int(row[2]),
+                            None if row[3] is None else float(row[3]),
+                        )
+                        for row in rows
+                    ),
+                )
+
         return BuildResult(
             comparison_db_path=comparison_db_path,
             rr_vectors=len(rr_vectors),
@@ -446,31 +484,81 @@ def _vector_to_array(vector: Sequence[Optional[float]]) -> np.ndarray:
 
 def _load_rr_candidates(
     conn: sqlite3.Connection, max_rr_candidates: Optional[int]
-) -> Tuple[List[str], np.ndarray, np.ndarray]:
-    sql = "SELECT rr_vector_id, norm_vector_json FROM rr_monthly_vectors ORDER BY rr_vector_id"
+) -> Tuple[List[str], np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    sql = (
+        "SELECT rr_vector_id, norm_vector_json, raw_vector_json "
+        "FROM rr_monthly_vectors ORDER BY rr_vector_id"
+    )
     if max_rr_candidates is not None:
         sql += f" LIMIT {int(max_rr_candidates)}"
     rows = conn.execute(sql).fetchall()
 
     rr_ids: List[str] = []
-    rr_values: List[np.ndarray] = []
+    rr_norm_values: List[np.ndarray] = []
+    rr_raw_values: List[np.ndarray] = []
     for row in rows:
         rr_ids.append(str(row[0]))
-        rr_values.append(_vector_to_array(json.loads(row[1])))
+        rr_norm_values.append(_vector_to_array(json.loads(row[1])))
+        rr_raw_values.append(_vector_to_array(json.loads(row[2])))
 
-    if rr_values:
-        rr_matrix = np.vstack(rr_values)
+    if rr_norm_values:
+        rr_norm_matrix = np.vstack(rr_norm_values)
     else:
-        rr_matrix = np.empty((0, 12), dtype=np.float32)
-    rr_mask = np.isfinite(rr_matrix)
-    return rr_ids, rr_matrix, rr_mask
+        rr_norm_matrix = np.empty((0, 12), dtype=np.float32)
+
+    if rr_raw_values:
+        rr_raw_matrix = np.vstack(rr_raw_values)
+    else:
+        rr_raw_matrix = np.empty((0, 12), dtype=np.float32)
+
+    rr_norm_mask = np.isfinite(rr_norm_matrix)
+    rr_raw_mask = np.isfinite(rr_raw_matrix)
+    rr_raw_rounded = np.round(rr_raw_matrix, EXACT_MATCH_DECIMALS)
+    return rr_ids, rr_norm_matrix, rr_norm_mask, rr_raw_matrix, rr_raw_mask, rr_raw_rounded
+
+
+def _load_ensemble_member_monthly_map(
+    conn: sqlite3.Connection,
+    ensemble_vector_ids: Sequence[str],
+) -> Dict[str, np.ndarray]:
+    member_values = {
+        ensemble_vector_id: np.full((12, 5), np.nan, dtype=np.float32)
+        for ensemble_vector_id in ensemble_vector_ids
+    }
+    if not ensemble_vector_ids:
+        return member_values
+
+    chunk_size = 500
+    for start in range(0, len(ensemble_vector_ids), chunk_size):
+        chunk = ensemble_vector_ids[start : start + chunk_size]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"""
+            SELECT ensemble_vector_id, month, ensemble_member, total
+            FROM ensemble_member_monthly_values
+            WHERE ensemble_vector_id IN ({placeholders})
+            ORDER BY ensemble_vector_id, month, ensemble_member
+            """,
+            tuple(chunk),
+        ).fetchall()
+
+        for row in rows:
+            ensemble_vector_id = str(row[0])
+            month = int(row[1])
+            member = int(row[2])
+            value = row[3]
+            if value is None:
+                continue
+            member_values[ensemble_vector_id][month - 1, member - 1] = float(value)
+
+    return member_values
 
 
 def _load_ensemble_queries(
     conn: sqlite3.Connection,
     max_ensemble_queries: Optional[int],
     offset: int = 0,
-) -> List[Tuple[str, np.ndarray, np.ndarray, Optional[float]]]:
+) -> List[Tuple[str, np.ndarray, np.ndarray, Optional[float], np.ndarray, np.ndarray]]:
     sql = (
         "SELECT ensemble_vector_id, norm_vector_json, uncertainty_score "
         "FROM ensemble_consensus_vectors ORDER BY ensemble_vector_id"
@@ -483,15 +571,24 @@ def _load_ensemble_queries(
         sql += f" LIMIT -1 OFFSET {int(offset)}"
     rows = conn.execute(sql).fetchall()
 
-    queries: List[Tuple[str, np.ndarray, np.ndarray, Optional[float]]] = []
+    ensemble_vector_ids = [str(row[0]) for row in rows]
+    member_lookup = _load_ensemble_member_monthly_map(conn, ensemble_vector_ids)
+
+    queries: List[Tuple[str, np.ndarray, np.ndarray, Optional[float], np.ndarray, np.ndarray]] = []
     for row in rows:
+        ensemble_vector_id = str(row[0])
         vec = _vector_to_array(json.loads(row[1]))
+        member_values = member_lookup[ensemble_vector_id]
+        member_values_rounded = np.round(member_values, EXACT_MATCH_DECIMALS)
+        member_month_mask = np.isfinite(member_values).any(axis=1)
         queries.append(
             (
-                str(row[0]),
+                ensemble_vector_id,
                 vec,
                 np.isfinite(vec),
                 None if row[2] is None else float(row[2]),
+                member_values_rounded,
+                member_month_mask,
             )
         )
     return queries
@@ -504,23 +601,32 @@ def _batched_query_topk(
     rr_ids: Sequence[str],
     rr_matrix: np.ndarray,
     rr_mask: np.ndarray,
+    rr_raw_mask: np.ndarray,
+    rr_raw_rounded: np.ndarray,
+    query_member_values_rounded: np.ndarray,
+    query_member_month_mask: np.ndarray,
     *,
     min_overlap: int,
     top_k: int,
     uncertainty_weight: float,
     batch_size: int,
-) -> List[Tuple[str, int, float, float, Optional[float]]]:
-    candidates: List[Tuple[str, int, float, float, Optional[float]]] = []
+) -> List[Tuple[str, int, int, float, float, Optional[float]]]:
+    candidates: List[Tuple[str, int, int, float, float, Optional[float]]] = []
     uncertainty = uncertainty_score if uncertainty_score is not None else 0.0
     n_rr = rr_matrix.shape[0]
+    query_member_mask = np.isfinite(query_member_values_rounded)
 
     for start in range(0, n_rr, batch_size):
         end = min(start + batch_size, n_rr)
         batch_values = rr_matrix[start:end]
         batch_mask = rr_mask[start:end]
+        batch_raw_mask = rr_raw_mask[start:end]
+        batch_raw_rounded = rr_raw_rounded[start:end]
 
         overlap_mask = batch_mask & query_mask
-        overlap_counts = overlap_mask.sum(axis=1)
+
+        valid_month_mask = batch_raw_mask & query_member_month_mask[np.newaxis, :]
+        overlap_counts = valid_month_mask.sum(axis=1)
         valid = overlap_counts >= min_overlap
         if not np.any(valid):
             continue
@@ -538,9 +644,16 @@ def _batched_query_topk(
 
         with np.errstate(divide="ignore", invalid="ignore"):
             cosine = np.where(denom > 0.0, dot / denom, -np.inf)
-        cosine = np.where(valid, cosine, -np.inf)
+        cosine = np.where(np.isfinite(cosine), cosine, -np.inf)
 
-        valid_idx = np.where(np.isfinite(cosine))[0]
+        exact_equal = (
+            np.abs(batch_raw_rounded[:, :, np.newaxis] - query_member_values_rounded[np.newaxis, :, :])
+            <= EXACT_MATCH_TOLERANCE
+        ) & query_member_mask[np.newaxis, :, :]
+        month_agreement = np.any(exact_equal, axis=2) & valid_month_mask
+        exact_counts = month_agreement.sum(axis=1)
+
+        valid_idx = np.where(valid)[0]
         if valid_idx.size == 0:
             continue
 
@@ -549,9 +662,11 @@ def _batched_query_topk(
         if take <= 0:
             continue
 
-        top_local_idx = valid_idx[np.argpartition(adjusted[valid_idx], -take)[-take:]]
-        order = np.argsort(adjusted[top_local_idx])[::-1]
-        top_local_idx = top_local_idx[order]
+        local_exact = exact_counts[valid_idx]
+        local_overlap = overlap_counts[valid_idx]
+        local_adjusted = adjusted[valid_idx]
+        order = np.lexsort((-local_adjusted, -local_overlap, -local_exact))
+        top_local_idx = valid_idx[order[:take]]
 
         for idx in top_local_idx:
             global_idx = start + int(idx)
@@ -559,13 +674,14 @@ def _batched_query_topk(
                 (
                     rr_ids[global_idx],
                     int(overlap_counts[idx]),
+                    int(exact_counts[idx]),
                     float(cosine[idx]),
                     float(adjusted[idx]),
                     uncertainty_score,
                 )
             )
 
-    candidates.sort(key=lambda row: (row[3], row[2], row[1]), reverse=True)
+    candidates.sort(key=lambda row: (row[2], row[1], row[4], row[3]), reverse=True)
     return candidates[:top_k]
 
 
@@ -580,7 +696,7 @@ def run_baseline_matching(
     batch_size: int = 8192,
     progress_interval: int = 0,
 ) -> MatchResult:
-    """Run exhaustive masked-cosine matching from ensemble consensus to RR vectors.
+    """Run exhaustive matching with exact month agreement as primary ranking.
 
     Set ``progress_interval`` > 0 to print progress with elapsed time and ETA
     every N processed ensemble queries.
@@ -590,7 +706,9 @@ def run_baseline_matching(
     session_id = None
 
     try:
-        rr_ids, rr_matrix, rr_mask = _load_rr_candidates(conn, max_rr_candidates)
+        rr_ids, rr_matrix, rr_mask, _rr_raw_matrix, rr_raw_mask, rr_raw_rounded = _load_rr_candidates(
+            conn, max_rr_candidates
+        )
         ensemble_queries = _load_ensemble_queries(conn, max_ensemble_queries)
 
         with conn:
@@ -602,10 +720,11 @@ def run_baseline_matching(
                     top_k,
                     min_overlap,
                     uncertainty_weight,
+                    ranking_method,
                     ensemble_queries,
                     rr_candidates
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     started_at,
@@ -613,13 +732,14 @@ def run_baseline_matching(
                     top_k,
                     min_overlap,
                     uncertainty_weight,
+                    RANKING_METHOD_EXACT_ANY_MEMBER,
                     len(ensemble_queries),
                     len(rr_ids),
                 ),
             )
             session_id = cursor.lastrowid
 
-        match_rows: List[Tuple[int, int, str, str, int, float, float, Optional[float]]] = []
+        match_rows: List[Tuple[int, int, str, str, int, int, float, float, Optional[float]]] = []
 
         total_queries = len(ensemble_queries)
         loop_start = time.monotonic()
@@ -629,6 +749,8 @@ def run_baseline_matching(
             ensemble_vec,
             ensemble_mask,
             uncertainty_score,
+            ensemble_member_values_rounded,
+            ensemble_member_month_mask,
         ) in enumerate(ensemble_queries, start=1):
             candidates = _batched_query_topk(
                 query_vec=ensemble_vec,
@@ -637,6 +759,10 @@ def run_baseline_matching(
                 rr_ids=rr_ids,
                 rr_matrix=rr_matrix,
                 rr_mask=rr_mask,
+                rr_raw_mask=rr_raw_mask,
+                rr_raw_rounded=rr_raw_rounded,
+                query_member_values_rounded=ensemble_member_values_rounded,
+                query_member_month_mask=ensemble_member_month_mask,
                 min_overlap=min_overlap,
                 top_k=top_k,
                 uncertainty_weight=uncertainty_weight,
@@ -644,7 +770,14 @@ def run_baseline_matching(
             )
 
             for rank, candidate in enumerate(candidates, start=1):
-                rr_vector_id, overlap, cosine_similarity, adjusted_score, unc = candidate
+                (
+                    rr_vector_id,
+                    overlap,
+                    exact_agreement_count,
+                    cosine_similarity,
+                    adjusted_score,
+                    unc,
+                ) = candidate
                 match_rows.append(
                     (
                         int(session_id),
@@ -652,6 +785,7 @@ def run_baseline_matching(
                         ensemble_vector_id,
                         rr_vector_id,
                         overlap,
+                        exact_agreement_count,
                         cosine_similarity,
                         adjusted_score,
                         unc,
@@ -684,11 +818,12 @@ def run_baseline_matching(
                         ensemble_vector_id,
                         rr_vector_id,
                         overlap_months,
+                        exact_agreement_count,
                         cosine_similarity,
                         adjusted_score,
                         ensemble_uncertainty
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     match_rows,
                 )
@@ -773,7 +908,9 @@ def run_matching_shard(
             "SELECT COUNT(*) FROM ensemble_consensus_vectors"
         ).fetchone()[0]
         query_offset, query_limit = _shard_bounds(total_queries, num_shards, shard_index)
-        rr_ids, rr_matrix, rr_mask = _load_rr_candidates(src, max_rr_candidates)
+        rr_ids, rr_matrix, rr_mask, _rr_raw_matrix, rr_raw_mask, rr_raw_rounded = _load_rr_candidates(
+            src, max_rr_candidates
+        )
         ensemble_queries = _load_ensemble_queries(src, query_limit, offset=query_offset)
     finally:
         src.close()
@@ -781,13 +918,15 @@ def run_matching_shard(
     started_at = _utc_now()
     loop_start = time.monotonic()
     shard_total = len(ensemble_queries)
-    match_rows: List[Tuple[int, str, str, int, float, float, Optional[float]]] = []
+    match_rows: List[Tuple[int, str, str, int, int, float, float, Optional[float]]] = []
 
     for processed, (
         ensemble_vector_id,
         ensemble_vec,
         ensemble_mask,
         uncertainty_score,
+        ensemble_member_values_rounded,
+        ensemble_member_month_mask,
     ) in enumerate(ensemble_queries, start=1):
         candidates = _batched_query_topk(
             query_vec=ensemble_vec,
@@ -796,6 +935,10 @@ def run_matching_shard(
             rr_ids=rr_ids,
             rr_matrix=rr_matrix,
             rr_mask=rr_mask,
+            rr_raw_mask=rr_raw_mask,
+            rr_raw_rounded=rr_raw_rounded,
+            query_member_values_rounded=ensemble_member_values_rounded,
+            query_member_month_mask=ensemble_member_month_mask,
             min_overlap=min_overlap,
             top_k=top_k,
             uncertainty_weight=uncertainty_weight,
@@ -803,13 +946,21 @@ def run_matching_shard(
         )
 
         for rank, candidate in enumerate(candidates, start=1):
-            rr_vector_id, overlap, cosine_similarity, adjusted_score, unc = candidate
+            (
+                rr_vector_id,
+                overlap,
+                exact_agreement_count,
+                cosine_similarity,
+                adjusted_score,
+                unc,
+            ) = candidate
             match_rows.append(
                 (
                     rank,
                     ensemble_vector_id,
                     rr_vector_id,
                     overlap,
+                    exact_agreement_count,
                     cosine_similarity,
                     adjusted_score,
                     unc,
@@ -848,11 +999,12 @@ def run_matching_shard(
                         ensemble_vector_id,
                         rr_vector_id,
                         overlap_months,
+                        exact_agreement_count,
                         cosine_similarity,
                         adjusted_score,
                         ensemble_uncertainty
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     match_rows,
                 )
@@ -868,11 +1020,12 @@ def run_matching_shard(
                     top_k,
                     min_overlap,
                     uncertainty_weight,
+                    ranking_method,
                     matches_written,
                     started_at,
                     completed_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     shard_index,
@@ -884,6 +1037,7 @@ def run_matching_shard(
                     top_k,
                     min_overlap,
                     uncertainty_weight,
+                    RANKING_METHOD_EXACT_ANY_MEMBER,
                     len(match_rows),
                     started_at,
                     completed_at,
@@ -930,10 +1084,11 @@ def merge_shard_matches(
                     top_k,
                     min_overlap,
                     uncertainty_weight,
+                    ranking_method,
                     ensemble_queries,
                     rr_candidates
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     started_at,
@@ -941,6 +1096,7 @@ def merge_shard_matches(
                     top_k,
                     min_overlap,
                     uncertainty_weight,
+                    RANKING_METHOD_EXACT_ANY_MEMBER,
                     0,
                     0,
                 ),
@@ -964,6 +1120,7 @@ def merge_shard_matches(
                         ensemble_vector_id,
                         rr_vector_id,
                         overlap_months,
+                        exact_agreement_count,
                         cosine_similarity,
                         adjusted_score,
                         ensemble_uncertainty
@@ -987,11 +1144,12 @@ def merge_shard_matches(
                             ensemble_vector_id,
                             rr_vector_id,
                             overlap_months,
+                            exact_agreement_count,
                             cosine_similarity,
                             adjusted_score,
                             ensemble_uncertainty
                         )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         [(int(session_id), *row) for row in rows],
                     )

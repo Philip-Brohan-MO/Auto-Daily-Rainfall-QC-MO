@@ -6,9 +6,9 @@ Given a daily-data specifier (the ensemble file name stem, e.g.
 
 * left    - the original scanned image
 * middle  - the ensemble daily-transcription consensus (median over members)
-* top-right - monthly-total comparison: ensemble consensus vs the top-K
-              matching Rainfall-Rescue station-years, plus a differences panel
-* bottom-right - a UK map showing the matched station locations
+* top-right - monthly-total comparison: all 5 ensemble members vs a selected-rank
+              Rainfall-Rescue station-year, plus a differences panel
+* bottom-right - a UK map showing the selected-rank station location
 
 All data comes from this project's three SQLite databases (built under ``$PDIR``):
 
@@ -21,6 +21,7 @@ Example
 -------
     python scripts/diagnostics/plot_image_consensus_metadata.py \
         --specifier DRain_1911-1920_RainNos_Middlesex_H-P-17 \
+    --comparison-rank 1 \
         --top-k 5 --output /var/tmp/diag.webp
 """
 
@@ -129,6 +130,29 @@ def load_monthly_consensus(comparison_db: Path, ensemble_vector_id: str) -> List
     return json.loads(row["raw_vector_json"])
 
 
+def load_ensemble_member_monthly(
+    comparison_db: Path, ensemble_vector_id: str
+) -> List[List[Optional[float]]]:
+    """Return per-member monthly totals as a list of 5 lists (each 12 values)."""
+    members: Dict[int, Dict[int, Optional[float]]] = {}
+    with _connect_immutable(comparison_db) as conn:
+        rows = conn.execute(
+            "SELECT month, ensemble_member, total "
+            "FROM ensemble_member_monthly_values "
+            "WHERE ensemble_vector_id = ? "
+            "ORDER BY ensemble_member, month",
+            (ensemble_vector_id,),
+        ).fetchall()
+    for row in rows:
+        m = int(row["month"])
+        mbr = int(row["ensemble_member"])
+        members.setdefault(mbr, {})[m] = row["total"]
+    result = []
+    for mbr in sorted(members.keys()):
+        result.append([members[mbr].get(mo) for mo in range(1, 13)])
+    return result
+
+
 def load_matches(
     comparison_db: Path, ensemble_vector_id: str, top_k: int
 ) -> List[dict]:
@@ -142,7 +166,8 @@ def load_matches(
             raise SystemExit("No similarity_sessions found; run the matcher first.")
         rows = conn.execute(
             """
-            SELECT m.query_rank, m.cosine_similarity, m.adjusted_score,
+                 SELECT m.query_rank, m.exact_agreement_count,
+                     m.cosine_similarity, m.adjusted_score,
                    m.overlap_months, r.location_name, r.station_number, r.year,
                    r.latitude, r.longitude, r.raw_vector_json
             FROM similarity_matches m
@@ -157,6 +182,7 @@ def load_matches(
         matches.append(
             {
                 "rank": row["query_rank"],
+                "exact": row["exact_agreement_count"],
                 "cosine": row["cosine_similarity"],
                 "adjusted": row["adjusted_score"],
                 "overlap": row["overlap_months"],
@@ -275,20 +301,32 @@ def _plot_daily_consensus(
         )
 
 
-def _plot_monthly_comparison(
-    ax_top, ax_bot, consensus_monthly, matches
+MEMBER_COLOURS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd"]
+
+
+def _plot_selected_rank_member_comparison(
+    ax_top, ax_bot, member_monthly: List[List[Optional[float]]], match: dict
 ) -> None:
+    """Plot all 5 ensemble member monthly values against a selected-rank RR match."""
     months = list(range(1, 13))
-    cons = [float(v) if v is not None else np.nan for v in consensus_monthly]
+    rr = [float(v) if v is not None else np.nan for v in match["monthly"]]
 
-    ax_top.plot(months, cons, marker="o", color="black", lw=2, zorder=10, label="Consensus")
-    for i, m in enumerate(matches):
-        colour = TAB10[i % len(TAB10)]
-        rr = [float(v) if v is not None else np.nan for v in m["monthly"]]
-        label = f"{m['cosine']:6.3f}  {int(m['year']):4d}  {m['location_name']}"
-        ax_top.plot(months, rr, marker="o", ls="--", color=colour, zorder=5, label=label)
+    for i, month_vals in enumerate(member_monthly):
+        vals = [float(v) if v is not None else np.nan for v in month_vals]
+        ax_top.plot(
+            months, vals,
+            marker="o", ls="-", color=MEMBER_COLOURS[i % len(MEMBER_COLOURS)],
+            alpha=0.7, lw=1.2, markersize=4,
+            label=f"Member {i + 1}",
+        )
 
-    ax_top.set_title("Monthly-total comparison")
+    rr_label = (
+        f"RR rank-{int(match['rank'])}: {int(match['exact']):>2d} exact  "
+        f"{int(match['year']):4d}  {match['location_name']}"
+    )
+    ax_top.plot(months, rr, marker="s", color="black", lw=2, zorder=10, label=rr_label)
+
+    ax_top.set_title(f"Ensemble members vs rank-{int(match['rank'])} RR match")
     ax_top.set_ylabel("Monthly total")
     ax_top.set_xticks([])
 
@@ -302,24 +340,26 @@ def _plot_monthly_comparison(
         ncol=1,
         fontsize="small",
         prop={"family": "monospace"},
-        title=" cosine   year  station",
     )
 
-    for i, m in enumerate(matches):
-        colour = TAB10[i % len(TAB10)]
+    for i, month_vals in enumerate(member_monthly):
         diff = []
         for j in range(12):
             try:
-                r = float(m["monthly"][j])
+                val = float(month_vals[j])
             except (TypeError, ValueError):
-                r = np.nan
-            diff.append(r - cons[j])
-        ax_bot.plot(months, diff, marker="s", color=colour, zorder=5)
+                val = np.nan
+            diff.append(val - rr[j])
+        ax_bot.plot(
+            months, diff,
+            marker="o", color=MEMBER_COLOURS[i % len(MEMBER_COLOURS)],
+            alpha=0.7, lw=1.2, markersize=4,
+        )
     ax_bot.axhline(0.0, color="black", lw=0.8, ls="--")
     ax_bot.set_xticks(months)
     ax_bot.set_xticklabels(MONTH_LABELS)
     ax_bot.set_xlabel("Month")
-    ax_bot.set_ylabel("RR - consensus")
+    ax_bot.set_ylabel(f"member − RR rank-{int(match['rank'])}")
 
 
 def _plot_map(fig, rect, matches) -> None:
@@ -362,6 +402,7 @@ def build_figure(
     ensemble_db: Path,
     comparison_db: Path,
     top_k: int,
+    comparison_rank: int = 1,
     output_path: Path,
 ) -> Path:
     from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
@@ -373,8 +414,14 @@ def build_figure(
 
     consensus_daily, spread_daily = load_daily_consensus(ensemble_db, file_id)
     consensus_monthly = load_monthly_consensus(comparison_db, ensemble_vector_id)
-    matches = load_matches(comparison_db, ensemble_vector_id, top_k)
+    member_monthly = load_ensemble_member_monthly(comparison_db, ensemble_vector_id)
+    if comparison_rank < 1:
+        raise SystemExit("comparison_rank must be >= 1")
+    # Ensure the selected rank is available even if top_k is smaller.
+    match_limit = max(top_k, comparison_rank)
+    matches = load_matches(comparison_db, ensemble_vector_id, match_limit)
     image_path = resolve_image_path(file_row["source_path"], file_row["file_name"])
+    selected_match = next((m for m in matches if int(m["rank"]) == comparison_rank), None)
 
     fig = Figure(figsize=(20, 10), dpi=100, facecolor=(0.95, 0.95, 0.95, 1))
     FigureCanvas(fig)
@@ -387,13 +434,28 @@ def build_figure(
     ax_daily = fig.add_axes([0.37, 0.04, 0.30, 0.86])
     _plot_daily_consensus(ax_daily, consensus_daily, spread_daily, consensus_monthly)
 
-    # Top-right: monthly comparison + differences
+    # Top-right: 5 ensemble members vs selected-rank RR match
     ax_month_top = fig.add_axes([0.72, 0.70, 0.26, 0.20])
     ax_month_bot = fig.add_axes([0.72, 0.53, 0.26, 0.15])
-    _plot_monthly_comparison(ax_month_top, ax_month_bot, consensus_monthly, matches)
+    if selected_match is not None:
+        _plot_selected_rank_member_comparison(
+            ax_month_top, ax_month_bot, member_monthly, selected_match
+        )
+    else:
+        ax_month_top.text(
+            0.5,
+            0.5,
+            f"No rank-{comparison_rank} match available",
+            ha="center",
+            va="center",
+            transform=ax_month_top.transAxes,
+        )
+        ax_month_top.set_axis_off()
+        ax_month_bot.set_axis_off()
 
-    # Bottom-right: UK map (title omitted to leave room for the legend above)
-    _plot_map(fig, [0.72, 0.02, 0.26, 0.30], matches)
+    # Bottom-right: UK map showing only the selected-rank matched station
+    map_matches = [selected_match] if selected_match is not None else []
+    _plot_map(fig, [0.72, 0.02, 0.26, 0.30], map_matches)
 
     title = f"{file_row['file_name']}   (file_id={file_id})"
     fig.suptitle(title, x=0.5, y=0.98, ha="center", va="top", fontsize="x-large")
@@ -428,6 +490,12 @@ def main() -> None:
         help=f"monthly_similarity.sqlite (default: {cmp_default})",
     )
     parser.add_argument(
+        "--comparison-rank",
+        type=int,
+        default=1,
+        help="Rank of match to compare against (default: 1)",
+    )
+    parser.add_argument(
         "--output", type=Path, default=None,
         help="Output image path (default: <specifier>_diagnostic.webp in cwd)",
     )
@@ -439,6 +507,7 @@ def main() -> None:
         ensemble_db=args.ensemble_db,
         comparison_db=args.comparison_db,
         top_k=args.top_k,
+        comparison_rank=args.comparison_rank,
         output_path=output,
     )
     print(f"Wrote {result}")

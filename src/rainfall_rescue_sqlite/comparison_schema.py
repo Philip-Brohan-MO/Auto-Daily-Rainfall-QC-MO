@@ -10,6 +10,7 @@ PRAGMA synchronous = NORMAL;
 
 DROP TABLE IF EXISTS similarity_matches;
 DROP TABLE IF EXISTS similarity_sessions;
+DROP TABLE IF EXISTS ensemble_member_monthly_values;
 DROP TABLE IF EXISTS ensemble_consensus_vectors;
 DROP TABLE IF EXISTS rr_monthly_vectors;
 
@@ -41,6 +42,15 @@ CREATE TABLE ensemble_consensus_vectors (
     norm_vector_json TEXT NOT NULL
 );
 
+CREATE TABLE ensemble_member_monthly_values (
+    ensemble_vector_id TEXT NOT NULL,
+    month INTEGER NOT NULL,
+    ensemble_member INTEGER NOT NULL,
+    total REAL,
+    PRIMARY KEY (ensemble_vector_id, month, ensemble_member),
+    FOREIGN KEY (ensemble_vector_id) REFERENCES ensemble_consensus_vectors(ensemble_vector_id)
+);
+
 CREATE TABLE similarity_sessions (
     session_id INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT NOT NULL,
@@ -49,6 +59,7 @@ CREATE TABLE similarity_sessions (
     top_k INTEGER NOT NULL,
     min_overlap INTEGER NOT NULL,
     uncertainty_weight REAL NOT NULL,
+    ranking_method TEXT NOT NULL DEFAULT 'cosine',
     ensemble_queries INTEGER NOT NULL DEFAULT 0,
     rr_candidates INTEGER NOT NULL DEFAULT 0,
     matches_written INTEGER NOT NULL DEFAULT 0,
@@ -62,6 +73,7 @@ CREATE TABLE similarity_matches (
     ensemble_vector_id TEXT NOT NULL,
     rr_vector_id TEXT NOT NULL,
     overlap_months INTEGER NOT NULL,
+    exact_agreement_count INTEGER NOT NULL DEFAULT 0,
     cosine_similarity REAL NOT NULL,
     adjusted_score REAL NOT NULL,
     ensemble_uncertainty REAL,
@@ -72,6 +84,7 @@ CREATE INDEX idx_rr_vectors_station_year ON rr_monthly_vectors(station_file_id, 
 CREATE INDEX idx_rr_vectors_location ON rr_monthly_vectors(location_name);
 CREATE INDEX idx_ensemble_vectors_file ON ensemble_consensus_vectors(file_id);
 CREATE INDEX idx_ensemble_vectors_descriptor ON ensemble_consensus_vectors(descriptor);
+CREATE INDEX idx_ensemble_member_values_vector ON ensemble_member_monthly_values(ensemble_vector_id);
 CREATE INDEX idx_similarity_matches_session ON similarity_matches(session_id);
 CREATE INDEX idx_similarity_matches_query ON similarity_matches(ensemble_vector_id, query_rank);
 """

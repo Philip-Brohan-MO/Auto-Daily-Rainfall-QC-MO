@@ -184,16 +184,18 @@ ORDER BY month, ensemble_member;
 ## Cross-Source Monthly Similarity Baseline
 
 This baseline compares monthly Rainfall Rescue station-year profiles against
-monthly consensus profiles derived from daily-image ensemble transcriptions.
+monthly ensemble transcriptions, ranking candidates by exact month agreement.
 
 ### Comparison Design
 
 - RR vectors: 12-month station-year values from `monthly_rainfall`
-- Ensemble vectors: one 12-month consensus profile per file from
-	`ensemble_monthly_totals` using the monthly median across 5 members
-- Similarity: masked cosine over overlapping months (shape-focused)
-- Uncertainty: per-file uncertainty score from monthly ensemble spread (IQR)
-	used as a ranking penalty
+- Ensemble member values: all 5 monthly member totals per file from
+	`ensemble_monthly_totals`
+- Primary rank score: count of months where RR equals any ensemble member,
+	after rounding both values to 2 decimal places
+- Tie-break: larger overlap month count
+- Compatibility metrics: masked cosine and adjusted score are still stored for
+	diagnostics and historical comparison
 
 ### Build And Match
 
@@ -228,5 +230,8 @@ python scripts/run_monthly_similarity_baseline.py \
 - `rr_monthly_vectors`: RR station-year raw + normalized monthly vectors
 - `ensemble_consensus_vectors`: ensemble per-file consensus vectors and
 	uncertainty fields
+- `ensemble_member_monthly_values`: monthly per-member values used for exact
+	agreement scoring
 - `similarity_sessions`: run metadata and parameters
-- `similarity_matches`: ranked top-K matches per ensemble query
+- `similarity_matches`: ranked top-K matches per ensemble query, including
+	`exact_agreement_count`
