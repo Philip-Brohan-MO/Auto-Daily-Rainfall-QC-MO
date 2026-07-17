@@ -19,7 +19,8 @@ dependencies:
   - pip:
       - ipykernel  # Jupyter kernel - to use this environment in notebooks
       - pymilvus[milvus_lite] # Vector DB for fast search
-
+      - plotly  # Interactive diagnostic maps
+      - nbformat  # Needed for inline Plotly rendering in notebooks
 variables:
 # Tell python to look for modules in the root directory of the project
 # (A hack, needs to be edited for every installation, but makes code

@@ -3,7 +3,11 @@
 Each JSON file has top-level keys ``Day 1`` .. ``Day 31`` and ``Totals``.
 Every key maps to a list of 12 month slots (January..December), and each
 month slot is an object ``{"values": [v1, v2, v3, v4, v5]}`` holding 5
-ensemble member values (rainfall in mm, or ``null``).
+ensemble member values (rainfall in mm, or ``null``/``"missing"``).
+
+``null`` and ``"missing"`` are both non-numeric, but they are distinct in the
+ingested database: ``null`` means unknown/blank while ``"missing"`` means the
+source explicitly marked the value as missing.
 """
 
 from __future__ import annotations
@@ -40,10 +44,10 @@ class EnsembleFileMetadata:
 @dataclass(frozen=True)
 class ParsedEnsembleFile:
     metadata: EnsembleFileMetadata
-    # (day_of_month, month, ensemble_member, rainfall)
-    daily_rows: List[Tuple[int, int, int, Optional[float]]]
-    # (month, ensemble_member, total)
-    total_rows: List[Tuple[int, int, Optional[float]]]
+    # (day_of_month, month, ensemble_member, rainfall, is_missing)
+    daily_rows: List[Tuple[int, int, int, Optional[float], bool]]
+    # (month, ensemble_member, total, is_missing)
+    total_rows: List[Tuple[int, int, Optional[float], bool]]
 
 
 class EnsembleParseError(ValueError):
@@ -62,7 +66,9 @@ def _parse_filename(stem: str) -> Tuple[Optional[int], Optional[int], Optional[s
     )
 
 
-def _month_values(slot: object, key: str, month_idx: int) -> List[Optional[float]]:
+def _month_values(
+    slot: object, key: str, month_idx: int
+) -> List[Tuple[Optional[float], bool]]:
     if not isinstance(slot, dict) or "values" not in slot:
         raise EnsembleParseError(
             f"Entry {month_idx} under '{key}' is missing a 'values' object"
@@ -73,12 +79,14 @@ def _month_values(slot: object, key: str, month_idx: int) -> List[Optional[float
             f"Entry {month_idx} under '{key}' must have {EXPECTED_MEMBERS} values, "
             f"found {len(values) if isinstance(values, list) else type(values).__name__}"
         )
-    coerced: List[Optional[float]] = []
+    coerced: List[Tuple[Optional[float], bool]] = []
     for value in values:
         if value is None:
-            coerced.append(None)
+            coerced.append((None, False))
+        elif isinstance(value, str) and value.strip().lower() == "missing":
+            coerced.append((None, True))
         elif isinstance(value, (int, float)):
-            coerced.append(float(value))
+            coerced.append((float(value), False))
         else:
             raise EnsembleParseError(
                 f"Non-numeric value '{value}' under '{key}' entry {month_idx}"
@@ -97,8 +105,8 @@ def parse_ensemble_json(path: Path) -> ParsedEnsembleFile:
     if not isinstance(data, dict):
         raise EnsembleParseError("Top-level JSON must be an object")
 
-    daily_rows: List[Tuple[int, int, int, Optional[float]]] = []
-    total_rows: List[Tuple[int, int, Optional[float]]] = []
+    daily_rows: List[Tuple[int, int, int, Optional[float], bool]] = []
+    total_rows: List[Tuple[int, int, Optional[float], bool]] = []
     days_seen = 0
 
     for key, slots in data.items():
@@ -122,12 +130,12 @@ def parse_ensemble_json(path: Path) -> ParsedEnsembleFile:
         for month_offset, slot in enumerate(slots):
             month = month_offset + 1
             values = _month_values(slot, key, month_offset)
-            for member_offset, value in enumerate(values):
+            for member_offset, (value, is_missing) in enumerate(values):
                 member = member_offset + 1
                 if target_is_total:
-                    total_rows.append((month, member, value))
+                    total_rows.append((month, member, value, is_missing))
                 else:
-                    daily_rows.append((day_of_month, month, member, value))
+                    daily_rows.append((day_of_month, month, member, value, is_missing))
 
     year_start, year_end, descriptor, section_id = _parse_filename(path.stem)
     metadata = EnsembleFileMetadata(

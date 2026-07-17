@@ -273,7 +273,7 @@ def _rr_vectors(rr_db_path: Path) -> List[RRVector]:
 
 
 def _ensemble_consensus_vectors(ensemble_db_path: Path) -> List[EnsembleConsensusVector]:
-    ens_sql = """
+    ens_sql_new = """
     SELECT
         f.file_id,
         f.file_name,
@@ -283,7 +283,24 @@ def _ensemble_consensus_vectors(ensemble_db_path: Path) -> List[EnsembleConsensu
         f.year_end,
         t.month,
         t.ensemble_member,
-        t.total
+        t.total,
+        t.is_missing
+    FROM ensemble_monthly_totals t
+    JOIN ensemble_files f ON f.file_id = t.file_id
+    ORDER BY f.file_id, t.month, t.ensemble_member
+    """
+    ens_sql_legacy = """
+    SELECT
+        f.file_id,
+        f.file_name,
+        f.descriptor,
+        f.section_id,
+        f.year_start,
+        f.year_end,
+        t.month,
+        t.ensemble_member,
+        t.total,
+        0 AS is_missing
     FROM ensemble_monthly_totals t
     JOIN ensemble_files f ON f.file_id = t.file_id
     ORDER BY f.file_id, t.month, t.ensemble_member
@@ -293,7 +310,12 @@ def _ensemble_consensus_vectors(ensemble_db_path: Path) -> List[EnsembleConsensu
 
     # immutable=1: read-only, no POSIX locking (works on shared cluster FS).
     with sqlite3.connect(f"file:{ensemble_db_path}?immutable=1", uri=True) as conn:
-        for row in conn.execute(ens_sql):
+        try:
+            rows = conn.execute(ens_sql_new)
+        except sqlite3.DatabaseError:
+            rows = conn.execute(ens_sql_legacy)
+
+        for row in rows:
             file_id = int(row[0])
             if file_id not in grouped:
                 grouped[file_id] = {
@@ -306,6 +328,11 @@ def _ensemble_consensus_vectors(ensemble_db_path: Path) -> List[EnsembleConsensu
                 }
 
             month = int(row[6])
+            is_missing = int(row[9]) if len(row) > 9 else 0
+            # Explicitly missing values are excluded from consensus; null values
+            # are handled as before (coerced to 0.0 by _coerce_numeric).
+            if is_missing:
+                continue
             grouped[file_id]["months"][month].append(_coerce_numeric(row[8]))
 
     vectors: List[EnsembleConsensusVector] = []
@@ -317,7 +344,7 @@ def _ensemble_consensus_vectors(ensemble_db_path: Path) -> List[EnsembleConsensu
         for month in MONTHS:
             member_values = payload["months"][month]
             if not member_values:
-                raw_vector.append(0.0)
+                raw_vector.append(None)
                 iqr_vector.append(None)
                 continue
 
@@ -437,36 +464,43 @@ def build_comparison_vectors(
             )
 
             with sqlite3.connect(f"file:{ensemble_db_path}?immutable=1", uri=True) as src:
-                rows = src.execute(
-                    """
-                    SELECT
-                        file_id,
-                        month,
-                        ensemble_member,
-                        total
-                    FROM ensemble_monthly_totals
-                    ORDER BY file_id, month, ensemble_member
-                    """
-                )
+                try:
+                    rows = src.execute(
+                        """
+                        SELECT
+                            file_id,
+                            month,
+                            ensemble_member,
+                            total,
+                            is_missing
+                        FROM ensemble_monthly_totals
+                        ORDER BY file_id, month, ensemble_member
+                        """
+                    )
+                except sqlite3.DatabaseError:
+                    rows = src.execute(
+                        """
+                        SELECT
+                            file_id,
+                            month,
+                            ensemble_member,
+                            total
+                        FROM ensemble_monthly_totals
+                        ORDER BY file_id, month, ensemble_member
+                        """
+                    )
                 conn.executemany(
                     """
                     INSERT INTO ensemble_member_monthly_values(
                         ensemble_vector_id,
                         month,
                         ensemble_member,
-                        total
+                        total,
+                        is_missing
                     )
-                    VALUES (?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?)
                     """,
-                    (
-                        (
-                            f"ensemble_file::{int(row[0])}",
-                            int(row[1]),
-                            int(row[2]),
-                            None if row[3] is None else float(row[3]),
-                        )
-                        for row in rows
-                    ),
+                    _iter_member_rows_for_insert(rows),
                 )
 
         return BuildResult(
@@ -532,21 +566,35 @@ def _load_ensemble_member_monthly_map(
     for start in range(0, len(ensemble_vector_ids), chunk_size):
         chunk = ensemble_vector_ids[start : start + chunk_size]
         placeholders = ",".join("?" for _ in chunk)
-        rows = conn.execute(
-            f"""
-            SELECT ensemble_vector_id, month, ensemble_member, total
-            FROM ensemble_member_monthly_values
-            WHERE ensemble_vector_id IN ({placeholders})
-            ORDER BY ensemble_vector_id, month, ensemble_member
-            """,
-            tuple(chunk),
-        ).fetchall()
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT ensemble_vector_id, month, ensemble_member, total, is_missing
+                FROM ensemble_member_monthly_values
+                WHERE ensemble_vector_id IN ({placeholders})
+                ORDER BY ensemble_vector_id, month, ensemble_member
+                """,
+                tuple(chunk),
+            ).fetchall()
+        except sqlite3.DatabaseError:
+            rows = conn.execute(
+                f"""
+                SELECT ensemble_vector_id, month, ensemble_member, total, 0 AS is_missing
+                FROM ensemble_member_monthly_values
+                WHERE ensemble_vector_id IN ({placeholders})
+                ORDER BY ensemble_vector_id, month, ensemble_member
+                """,
+                tuple(chunk),
+            ).fetchall()
 
         for row in rows:
             ensemble_vector_id = str(row[0])
             month = int(row[1])
             member = int(row[2])
             value = row[3]
+            is_missing = int(row[4]) if len(row) > 4 else 0
+            if is_missing:
+                continue
             if value is None:
                 continue
             member_values[ensemble_vector_id][month - 1, member - 1] = float(value)
@@ -592,6 +640,18 @@ def _load_ensemble_queries(
             )
         )
     return queries
+
+
+def _iter_member_rows_for_insert(rows):
+    """Yield comparison table rows, handling old ensemble DBs without is_missing."""
+    for row in rows:
+        yield (
+            f"ensemble_file::{int(row[0])}",
+            int(row[1]),
+            int(row[2]),
+            None if row[3] is None else float(row[3]),
+            0 if len(row) < 5 else int(row[4]),
+        )
 
 
 def _batched_query_topk(

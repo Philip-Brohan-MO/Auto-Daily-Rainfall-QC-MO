@@ -47,6 +47,7 @@ CREATE TABLE ensemble_member_monthly_values (
     month INTEGER NOT NULL,
     ensemble_member INTEGER NOT NULL,
     total REAL,
+    is_missing INTEGER NOT NULL DEFAULT 0 CHECK (is_missing IN (0, 1)),
     PRIMARY KEY (ensemble_vector_id, month, ensemble_member),
     FOREIGN KEY (ensemble_vector_id) REFERENCES ensemble_consensus_vectors(ensemble_vector_id)
 );
