@@ -29,6 +29,7 @@ run_py scripts/run_ensemble_ingest_shard.py \
     --shard-dir "${ENSEMBLE_SHARD_DIR}" \
     --num-shards "${ENSEMBLE_NUM_SHARDS}" \
     --shard-index "${SLURM_ARRAY_TASK_ID}" \
+    ${ENSEMBLE_ROOT:+--ensemble-root "${ENSEMBLE_ROOT}"} \
     ${ENSEMBLE_MAX_FILES:+--max-files "${ENSEMBLE_MAX_FILES}"}
 
 echo "Ensemble shard ${SLURM_ARRAY_TASK_ID} complete."

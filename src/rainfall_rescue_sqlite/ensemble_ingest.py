@@ -14,7 +14,7 @@ from .ensemble_parser import (
     ParsedEnsembleFile,
     parse_ensemble_json,
 )
-from .ensemble_schema import rebuild_schema
+from .ensemble_schema import rebuild_schema, rebuild_schema_tables_only, create_indexes
 
 DEFAULT_ENSEMBLE_ROOT = Path(
     "/data/scratch/philip.brohan/documents/Daily_Rainfall_UK/"
@@ -286,7 +286,18 @@ def merge_ensemble_shards(
     started_at = _utc_now()
     run_id = None
     try:
-        rebuild_schema(conn)
+        # Build tables without secondary indexes and create them once after the
+        # bulk load; maintaining indexes per insert dominates the merge runtime
+        # on the full dataset (tens of millions of rows). The DB is built on
+        # node-local scratch and re-run on failure, so durability pragmas can be
+        # relaxed. temp_store is left on disk (FILE) so the end-of-load index
+        # sort spills to node-local scratch instead of RAM, and the page cache
+        # is capped, keeping peak memory well within the job's allocation.
+        rebuild_schema_tables_only(conn)
+        conn.execute("PRAGMA synchronous = OFF")
+        conn.execute("PRAGMA journal_mode = OFF")
+        conn.execute("PRAGMA temp_store = FILE")
+        conn.execute("PRAGMA cache_size = -262144")  # ~256 MB page cache
         with conn:
             cursor = conn.execute(
                 """
@@ -378,6 +389,9 @@ def merge_ensemble_shards(
                 errors += len(shard_errors)
             finally:
                 shard_conn.close()
+
+        # Build the secondary indexes once, now that all rows are loaded.
+        create_indexes(conn)
 
         with conn:
             conn.execute(

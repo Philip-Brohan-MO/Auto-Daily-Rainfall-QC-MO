@@ -47,7 +47,7 @@ ARRAY_MAX=$(( RENDER_NUM_SHARDS - 1 ))
 PRECOMPUTE_RES="--qos=${SLURM_QOS} --ntasks=${RPRECOMPUTE_CORES} --ntasks-per-core=1 --mem=${RPRECOMPUTE_MEM_MB} --time=${RPRECOMPUTE_TIME_MIN}"
 RENDER_RES="--qos=${SLURM_QOS} --ntasks=${RRENDER_CORES} --ntasks-per-core=1 --mem=${RRENDER_MEM_MB} --time=${RRENDER_TIME_MIN}"
 VALIDATE_RES="--qos=${SLURM_QOS} --ntasks=${RVALIDATE_CORES} --ntasks-per-core=1 --mem=${RVALIDATE_MEM_MB} --time=${RVALIDATE_TIME_MIN}"
-ENCODE_RES="--qos=${SLURM_QOS} --ntasks=${RENCODE_CORES} --ntasks-per-core=1 --mem=${RENCODE_MEM_MB} --time=${RENCODE_TIME_MIN}"
+ENCODE_RES="--qos=${SLURM_QOS} --ntasks=1 --cpus-per-task=${RENCODE_CORES} --mem=${RENCODE_MEM_MB} --time=${RENCODE_TIME_MIN}"
 
 PRECOMPUTE_DEP=""
 if [[ "${SKIP_PRECOMPUTE}" -eq 0 ]]; then

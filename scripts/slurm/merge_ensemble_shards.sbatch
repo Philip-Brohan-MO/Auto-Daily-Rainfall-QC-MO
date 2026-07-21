@@ -23,6 +23,7 @@ echo "Merging ${ENSEMBLE_NUM_SHARDS} ensemble shards from ${ENSEMBLE_SHARD_DIR} 
 run_py scripts/merge_ensemble_shards.py \
     --ensemble-db-path "${ENSEMBLE_DB}" \
     --shard-dir "${ENSEMBLE_SHARD_DIR}" \
+    ${ENSEMBLE_ROOT:+--ensemble-root "${ENSEMBLE_ROOT}"} \
     --expected-shards "${ENSEMBLE_NUM_SHARDS}"
 
 echo "Ensemble merge complete."

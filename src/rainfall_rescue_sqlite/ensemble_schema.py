@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 
-SCHEMA_SQL = """
+TABLES_SQL = """
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 
@@ -74,7 +74,9 @@ CREATE TABLE ensemble_ingestion_file_errors (
     error_message TEXT NOT NULL,
     FOREIGN KEY (run_id) REFERENCES ensemble_ingestion_runs(run_id)
 );
+"""
 
+INDEXES_SQL = """
 CREATE INDEX idx_ensemble_files_years ON ensemble_files(year_start, year_end);
 CREATE INDEX idx_ensemble_files_descriptor ON ensemble_files(descriptor);
 CREATE INDEX idx_ensemble_files_match_type ON ensemble_files(match_type);
@@ -85,8 +87,27 @@ CREATE INDEX idx_ensemble_daily_member ON ensemble_daily_values(ensemble_member)
 CREATE INDEX idx_ensemble_totals_month ON ensemble_monthly_totals(month);
 """
 
+# Full schema (tables + indexes) for the normal single-pass ingest.
+SCHEMA_SQL = TABLES_SQL + INDEXES_SQL
+
 
 def rebuild_schema(connection: sqlite3.Connection) -> None:
     """Drop and recreate the full SQLite schema for a clean rebuild."""
     with connection:
         connection.executescript(SCHEMA_SQL)
+
+
+def rebuild_schema_tables_only(connection: sqlite3.Connection) -> None:
+    """Recreate the tables without secondary indexes.
+
+    Used by the shard merge, which bulk-loads millions of rows and then builds
+    the indexes once at the end (far faster than maintaining them per insert).
+    """
+    with connection:
+        connection.executescript(TABLES_SQL)
+
+
+def create_indexes(connection: sqlite3.Connection) -> None:
+    """Create the secondary indexes (call after a bulk load)."""
+    with connection:
+        connection.executescript(INDEXES_SQL)

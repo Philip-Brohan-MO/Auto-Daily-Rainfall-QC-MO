@@ -26,12 +26,17 @@ rm -f "${ENSEMBLE_SHARD_DIR}"/ens_shard_*.sqlite
 # jobs locate config.sh (sbatch copies the script away from this directory).
 EXPORTS="ALL,RQC_SLURM_DIR=${SCRIPT_DIR},ENSEMBLE_NUM_SHARDS=${ENSEMBLE_NUM_SHARDS}"
 EXPORTS="${EXPORTS},ENSEMBLE_MAX_FILES=${ENSEMBLE_MAX_FILES},PDIR=${PDIR}"
+EXPORTS="${EXPORTS},ENSEMBLE_ROOT=${ENSEMBLE_ROOT}"
+
+echo "Ensemble source root: ${ENSEMBLE_ROOT:-<package default (operational sample)>}"
 
 ARRAY_MAX=$(( ENSEMBLE_NUM_SHARDS - 1 ))
 
 # Resource requests per stage (qos / cores via --ntasks / RAM in MB / minutes).
-INGEST_RES="--qos=${SLURM_QOS} --ntasks=${EINGEST_CORES} --ntasks-per-core=1 --mem=${EINGEST_MEM_MB} --time=${EINGEST_TIME_MIN}"
-MERGE_RES="--qos=${SLURM_QOS} --ntasks=${EMERGE_CORES} --ntasks-per-core=1 --mem=${EMERGE_MEM_MB} --time=${EMERGE_TIME_MIN}"
+# --gres=tmp:N reserves N MB of node-local scratch (nodes advertise ~1.7e6 MB);
+# the whole merged DB plus index-sort temp files are built there before publish.
+INGEST_RES="--qos=${SLURM_QOS} --ntasks=${EINGEST_CORES} --ntasks-per-core=1 --mem=${EINGEST_MEM_MB} --time=${EINGEST_TIME_MIN} --gres=tmp:${EINGEST_TMP_MB}"
+MERGE_RES="--qos=${SLURM_QOS} --ntasks=${EMERGE_CORES} --ntasks-per-core=1 --mem=${EMERGE_MEM_MB} --time=${EMERGE_TIME_MIN} --gres=tmp:${EMERGE_TMP_MB}"
 
 INGEST_ID=$(sbatch --parsable \
     ${INGEST_RES} \

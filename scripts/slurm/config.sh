@@ -16,6 +16,13 @@ export SLURM_LOG_DIR="${PDIR}/slurm_logs"
 export ENSEMBLE_DB="${PDIR}/ensemble_transcriptions.sqlite"
 export ENSEMBLE_SHARD_DIR="${PDIR}/ensemble_shards"
 
+# Root of the ensemble transcription JSON tree to ingest. Set this (or the
+# legacy ENSEMBLE_TRANSCRIPTIONS_ROOT) to point at the full dataset; if left
+# empty the Python package default (the operational sample) is used. This value
+# is passed explicitly to every job via --ensemble-root, so it never relies on
+# environment propagation.
+export ENSEMBLE_ROOT="${ENSEMBLE_ROOT:-${ENSEMBLE_TRANSCRIPTIONS_ROOT:-}}"
+
 # --- Sharding / matching parameters -------------------------------------
 export NUM_SHARDS="${NUM_SHARDS:-100}"
 export TOP_K="${TOP_K:-10}"
@@ -37,25 +44,37 @@ export ENSEMBLE_MAX_FILES="${ENSEMBLE_MAX_FILES:-}"
 export SLURM_QOS="${SLURM_QOS:-normal}"
 
 export BUILD_CORES="${BUILD_CORES:-2}"
-export BUILD_MEM_MB="${BUILD_MEM_MB:-8000}"
-export BUILD_TIME_MIN="${BUILD_TIME_MIN:-20}"
+export BUILD_MEM_MB="${BUILD_MEM_MB:-16000}"  # full dataset: ~570k ensemble vectors held in memory
+export BUILD_TIME_MIN="${BUILD_TIME_MIN:-120}"  # full dataset: ~34M member rows to read/sort
 
 export MATCH_CORES="${MATCH_CORES:-2}"
-export MATCH_MEM_MB="${MATCH_MEM_MB:-4000}"
-export MATCH_TIME_MIN="${MATCH_TIME_MIN:-15}"
+export MATCH_MEM_MB="${MATCH_MEM_MB:-4000}"  # RR candidates fixed + queries streamed -> memory flat
+export MATCH_TIME_MIN="${MATCH_TIME_MIN:-60}"  # full dataset: ~12.7x queries/shard (sample ~85s -> ~15-18min)
 
 export MERGE_CORES="${MERGE_CORES:-1}"
 export MERGE_MEM_MB="${MERGE_MEM_MB:-4000}"
-export MERGE_TIME_MIN="${MERGE_TIME_MIN:-20}"
+export MERGE_TIME_MIN="${MERGE_TIME_MIN:-40}"  # full dataset: ~12.7x shard rows to combine
 
 # Ensemble-ingest stages (JSON parsing is single-threaded and I/O bound).
+# Sized for the full operational dataset (~584k JSON files -> ~1.1e9 rows). With
+# 100 shards each array task parses ~5.8k files (~50 min) and writes ~11M rows;
+# the merge then combines ~1.1e9 rows and builds the indexes at the end.
+# For a quick ENSEMBLE_MAX_FILES smoke run these can be lowered to speed queuing.
 export EINGEST_CORES="${EINGEST_CORES:-1}"
-export EINGEST_MEM_MB="${EINGEST_MEM_MB:-4000}"
-export EINGEST_TIME_MIN="${EINGEST_TIME_MIN:-30}"
+export EINGEST_MEM_MB="${EINGEST_MEM_MB:-8000}"
+export EINGEST_TIME_MIN="${EINGEST_TIME_MIN:-120}"
 
 export EMERGE_CORES="${EMERGE_CORES:-1}"
-export EMERGE_MEM_MB="${EMERGE_MEM_MB:-8000}"
-export EMERGE_TIME_MIN="${EMERGE_TIME_MIN:-30}"
+export EMERGE_MEM_MB="${EMERGE_MEM_MB:-24000}"
+export EMERGE_TIME_MIN="${EMERGE_TIME_MIN:-360}"  # cpu partition max wall (6 h)
+
+# Node-local scratch reserved per job via --gres=tmp:N (N in MB; nodes advertise
+# ~1.7e6 MB / ~1.66 TB). Every SQLite DB is built on this scratch and copied to
+# shared disc at the end. The merge holds the entire combined DB (~77 GB for the
+# full dataset) plus index-sort temp files, so it needs a large reservation; each
+# ingest shard only writes its own slice (< 1 GB for the full dataset).
+export EINGEST_TMP_MB="${EINGEST_TMP_MB:-16000}"
+export EMERGE_TMP_MB="${EMERGE_TMP_MB:-300000}"
 
 # --- Rainfall animation pipeline ----------------------------------------
 # Interpolated daily-rainfall map animation (precompute -> render array ->
@@ -103,7 +122,7 @@ export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
 # Pin BLAS/OpenMP thread counts to the cores SLURM actually gave this job so a
 # single NumPy process uses exactly its allocation (call inside each sbatch).
 set_thread_env() {
-    local cores="${SLURM_NTASKS:-${SLURM_CPUS_PER_TASK:-1}}"
+    local cores="${SLURM_CPUS_PER_TASK:-${SLURM_NTASKS:-1}}"
     export OMP_NUM_THREADS="${cores}"
     export OPENBLAS_NUM_THREADS="${cores}"
     export MKL_NUM_THREADS="${cores}"

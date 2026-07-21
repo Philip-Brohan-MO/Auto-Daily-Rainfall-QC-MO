@@ -4,8 +4,8 @@
 #SBATCH --error=%x_%j.err
 # Default resource requests (overridden by submit_animation.sh via CLI flags).
 #SBATCH --qos=normal
-#SBATCH --ntasks=2
-#SBATCH --ntasks-per-core=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
 #SBATCH --mem=4000
 #SBATCH --time=30
 
