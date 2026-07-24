@@ -24,7 +24,7 @@ for arg in "$@"; do
     esac
 done
 
-mkdir -p "${SHARD_DIR}" "${SLURM_LOG_DIR}"
+mkdir -p "${SIMILARITY_SHARD_DIR}" "${SLURM_LOG_DIR}"
 
 # Pass shared config through to the jobs via --export so config values chosen
 # here (e.g. NUM_SHARDS) are honoured inside each job. RQC_SLURM_DIR lets the
@@ -72,4 +72,4 @@ echo "Submitted merge job: ${MERGE_ID}"
 
 echo
 echo "Pipeline submitted. Track with:  squeue -u \$USER"
-echo "Final results land in: ${COMPARISON_DB} (latest similarity_sessions row)"
+echo "Final results land in: ${COMPARISON_PARQUET_ROOT} (latest similarity_sessions row)"

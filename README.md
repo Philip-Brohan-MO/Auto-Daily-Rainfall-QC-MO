@@ -3,6 +3,50 @@
 Follow-on to Auto-Daily-Rainfall focused on data identification and quality
 control.
 
+## Parquet And DuckDB Replatform (In Progress)
+
+This repository now includes clean-slate Parquet ingestion entrypoints for both
+Rainfall Rescue CSV data and ensemble transcription JSON data. These are the
+first implementation step of moving from SQLite merge bottlenecks to a
+Parquet-plus-DuckDB backend.
+
+### Environment
+
+Use the ADRQ environment in `environments/ADRQ.yml`, which now includes
+DuckDB and PyArrow dependencies.
+
+### New Build Commands
+
+Rainfall Rescue to Parquet:
+
+```bash
+python scripts/build_rainfall_rescue_parquet.py --overwrite
+```
+
+Ensemble transcriptions to Parquet:
+
+```bash
+python scripts/build_ensemble_transcriptions_parquet.py --overwrite
+```
+
+Smoke tests:
+
+```bash
+python scripts/build_rainfall_rescue_parquet.py \
+	--max-files 50 \
+	--dataset-root /var/tmp/rainfall_rescue_parquet_smoke \
+	--overwrite
+
+python scripts/build_ensemble_transcriptions_parquet.py \
+	--max-files 50 \
+	--dataset-root /var/tmp/ensemble_transcriptions_parquet_smoke \
+	--overwrite
+```
+
+Outputs include an ingestion manifest JSON under each dataset root:
+
+- `_metadata/ingestion_run.json`
+
 ## Rainfall Rescue SQLite Ingestion
 
 This repository now includes code to ingest combined station CSV files from a
@@ -203,6 +247,16 @@ Run full vector build + matching:
 
 ```bash
 python scripts/run_monthly_similarity_baseline.py
+```
+
+Run on the Parquet/DuckDB backend (replatform path):
+
+```bash
+python scripts/run_monthly_similarity_baseline.py \
+	--backend duckdb \
+	--rr-dataset-root ${PDIR}/Rainfall-Rescue/rainfall_rescue_parquet \
+	--ensemble-dataset-root ${PDIR}/ensemble_transcriptions_parquet \
+	--comparison-root ${PDIR}/monthly_similarity_parquet
 ```
 
 Smoke test with small subsets:

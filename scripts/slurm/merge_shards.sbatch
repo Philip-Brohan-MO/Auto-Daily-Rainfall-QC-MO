@@ -19,10 +19,22 @@ set_thread_env
 
 cd "${REPO_ROOT}"
 
-echo "Merging ${NUM_SHARDS} shards from ${SHARD_DIR} into ${COMPARISON_DB}"
+# Cap DuckDB's memory to this job's cgroup allocation (it otherwise sizes from
+# the node's physical RAM and can be OOM-killed) and let the ORDER BY sort of
+# the merged rows spill to node-local scratch instead of failing.
+JOB_MEM_MB="${SLURM_MEM_PER_NODE:-${MERGE_MEM_MB:-8000}}"
+DUCKDB_LIMIT_MB=$(( JOB_MEM_MB > 5000 ? JOB_MEM_MB - 3000 : 2000 ))
+export DUCKDB_MEMORY_LIMIT="${DUCKDB_LIMIT_MB}MB"
+export DUCKDB_TEMP_DIR="${TMPDIR:-/var/tmp}/duckdb_merge_${SLURM_JOB_ID:-$$}"
+mkdir -p "${DUCKDB_TEMP_DIR}"
+trap 'rm -rf "${DUCKDB_TEMP_DIR}"' EXIT
+
+echo "Merging ${NUM_SHARDS} shards from ${SIMILARITY_SHARD_DIR} into ${COMPARISON_PARQUET_ROOT}"
+echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
 run_py scripts/merge_similarity_shards.py \
-    --comparison-db-path "${COMPARISON_DB}" \
-    --shard-dir "${SHARD_DIR}" \
+    --backend duckdb \
+    --comparison-root "${COMPARISON_PARQUET_ROOT}" \
+    --shard-dir "${SIMILARITY_SHARD_DIR}" \
     --top-k "${TOP_K}" \
     --min-overlap "${MIN_OVERLAP}" \
     --uncertainty-weight "${UNCERTAINTY_WEIGHT}" \

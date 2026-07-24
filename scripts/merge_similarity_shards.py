@@ -1,7 +1,9 @@
 """Merge per-shard match files into a single similarity session.
 
-Reads every ``shard_*.sqlite`` in the shard directory and copies its matches
-into ``similarity_matches`` in the comparison DB under one new session row.
+DuckDB/parquet backend: reads ``similarity_shard_*.parquet`` and writes the
+combined session into the comparison Parquet root.
+SQLite backend (legacy): reads ``shard_*.sqlite`` and copies into the shared
+comparison DB.
 """
 
 from __future__ import annotations
@@ -12,6 +14,10 @@ import shutil
 from pathlib import Path
 
 from src.rainfall_rescue_sqlite.comparison_baseline import merge_shard_matches
+from src.rainfall_rescue_sqlite.parquet_similarity import (
+    default_comparison_parquet_root,
+    merge_similarity_shards_parquet,
+)
 from src.rainfall_rescue_sqlite.sqlite_staging import local_scratch_dir, publish_db
 
 
@@ -24,8 +30,22 @@ def _pdir_path(*parts: str) -> Path:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge similarity match shards")
+    parser.add_argument(
+        "--backend",
+        choices=("duckdb", "sqlite"),
+        default="duckdb",
+        help="Storage backend (default: duckdb/parquet)",
+    )
+    # DuckDB/parquet paths
+    parser.add_argument("--comparison-root", type=Path, default=None)
+    parser.add_argument(
+        "--shard-dir",
+        type=Path,
+        default=None,
+        help="Directory containing per-shard parquet files (default: $PDIR/similarity_shards_parquet)",
+    )
+    # SQLite paths (legacy)
     parser.add_argument("--comparison-db-path", type=Path, default=None)
-    parser.add_argument("--shard-dir", type=Path, default=None)
     parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--min-overlap", type=int, default=10)
     parser.add_argument("--uncertainty-weight", type=float, default=0.15)
@@ -40,6 +60,24 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    if args.backend == "duckdb":
+        comparison_root = args.comparison_root or default_comparison_parquet_root()
+        shard_dir = args.shard_dir or _pdir_path("similarity_shards_parquet")
+
+        result = merge_similarity_shards_parquet(
+            comparison_root=comparison_root,
+            shard_dir=Path(shard_dir),
+            top_k=args.top_k,
+            min_overlap=args.min_overlap,
+            uncertainty_weight=args.uncertainty_weight,
+            expected_shards=args.expected_shards,
+        )
+        print(f"Merged {result.shards_merged} shards -> session {result.session_id}")
+        print(f"  {result.matches_written} match rows written to {comparison_root}")
+        return
+
+    # SQLite (legacy) path.
     comparison_db_path = args.comparison_db_path or _pdir_path("monthly_similarity.sqlite")
     shard_dir = args.shard_dir or _pdir_path("similarity_shards")
 

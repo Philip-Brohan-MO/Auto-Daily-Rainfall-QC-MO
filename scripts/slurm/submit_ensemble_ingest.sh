@@ -20,6 +20,7 @@ mkdir -p "${ENSEMBLE_SHARD_DIR}" "${SLURM_LOG_DIR}"
 # Remove any shard files from a previous run so the merge sees only this run's
 # output (and its --expected-shards count is meaningful).
 rm -f "${ENSEMBLE_SHARD_DIR}"/ens_shard_*.sqlite
+rm -rf "${ENSEMBLE_SHARD_DIR}"/ens_shard_*
 
 # Pass shared config through to the jobs via --export so values chosen here
 # (e.g. ENSEMBLE_NUM_SHARDS) are honoured inside each job. RQC_SLURM_DIR lets the
@@ -27,6 +28,7 @@ rm -f "${ENSEMBLE_SHARD_DIR}"/ens_shard_*.sqlite
 EXPORTS="ALL,RQC_SLURM_DIR=${SCRIPT_DIR},ENSEMBLE_NUM_SHARDS=${ENSEMBLE_NUM_SHARDS}"
 EXPORTS="${EXPORTS},ENSEMBLE_MAX_FILES=${ENSEMBLE_MAX_FILES},PDIR=${PDIR}"
 EXPORTS="${EXPORTS},ENSEMBLE_ROOT=${ENSEMBLE_ROOT}"
+EXPORTS="${EXPORTS},ENSEMBLE_TRANSCRIPTIONS_ROOT=${ENSEMBLE_ROOT}"
 
 echo "Ensemble source root: ${ENSEMBLE_ROOT:-<package default (operational sample)>}"
 
@@ -56,4 +58,4 @@ echo "Submitted merge job: ${MERGE_ID}"
 
 echo
 echo "Pipeline submitted. Track with:  squeue -u \$USER"
-echo "Final database lands in: ${ENSEMBLE_DB}"
+echo "Final parquet dataset lands in: ${ENSEMBLE_PARQUET_ROOT}"

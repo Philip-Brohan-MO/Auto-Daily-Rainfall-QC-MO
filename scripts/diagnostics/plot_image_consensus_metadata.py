@@ -10,12 +10,12 @@ Given a daily-data specifier (the ensemble file name stem, e.g.
               Rainfall-Rescue station-year, plus a differences panel
 * bottom-right - a UK map showing the selected-rank station location
 
-All data comes from this project's three SQLite databases (built under ``$PDIR``):
+All data comes from this project's parquet datasets (built under ``$PDIR``):
 
-* ``ensemble_transcriptions.sqlite`` - daily ensemble transcriptions
-* ``rainfall_rescue.sqlite``         - Rainfall-Rescue monthly data (via the
-                                       comparison DB's ``rr_monthly_vectors``)
-* ``monthly_similarity.sqlite``      - comparison vectors + similarity matches
+* the ensemble parquet root - ``ensemble_files`` and ``ensemble_daily_values``
+* the comparison/similarity parquet root - ``ensemble_consensus_vectors``,
+  ``ensemble_member_monthly_values``, ``rr_monthly_vectors``,
+  ``similarity_matches`` and ``similarity_sessions``
 
 Example
 -------
@@ -30,11 +30,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import sqlite3
 from pathlib import Path
 from statistics import median
 from typing import Dict, List, Optional, Tuple
 
+import duckdb
 import numpy as np
 
 MONTH_LABELS = (
@@ -58,37 +58,50 @@ def _pdir() -> Path:
     return Path(pdir)
 
 
-def _connect_immutable(path: Path) -> sqlite3.Connection:
-    """Open a SQLite DB read-only (works on shared cluster filesystems)."""
-    conn = sqlite3.connect(f"file:{path}?immutable=1", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _connect_immutable(path: Path):  # pragma: no cover - retained for compatibility
+    raise NotImplementedError("SQLite access has been replaced by parquet/DuckDB.")
 
 
-def lookup_ensemble_file(ensemble_db: Path, specifier: str) -> sqlite3.Row:
+def _table_glob(root, table: str) -> str:
+    """Glob pattern for every parquet shard of ``table`` under ``root``."""
+    return f"{Path(root)}/{table}/*.parquet"
+
+
+_ENSEMBLE_FILE_KEYS = (
+    "file_id", "file_name", "source_path", "descriptor",
+    "section_id", "year_start", "year_end",
+)
+
+
+def lookup_ensemble_file(ensemble_dataset_root, specifier: str) -> Dict:
     """Find the ensemble file row for a specifier (file-name stem or .json name)."""
     name = specifier
     if not name.endswith(".json"):
         name = f"{name}.json"
-    with _connect_immutable(ensemble_db) as conn:
+    files_glob = _table_glob(ensemble_dataset_root, "ensemble_files")
+    cols = ", ".join(_ENSEMBLE_FILE_KEYS)
+    conn = duckdb.connect()
+    try:
         row = conn.execute(
-            "SELECT file_id, file_name, source_path, descriptor, section_id, "
-            "year_start, year_end FROM ensemble_files WHERE file_name = ?",
-            (name,),
+            f"SELECT {cols} FROM read_parquet('{files_glob}') "
+            "WHERE file_name = ? LIMIT 1",
+            [name],
         ).fetchone()
         if row is None:
             row = conn.execute(
-                "SELECT file_id, file_name, source_path, descriptor, section_id, "
-                "year_start, year_end FROM ensemble_files WHERE file_name LIKE ?",
-                (f"%{specifier}%",),
+                f"SELECT {cols} FROM read_parquet('{files_glob}') "
+                "WHERE file_name LIKE ? LIMIT 1",
+                [f"%{specifier}%"],
             ).fetchone()
+    finally:
+        conn.close()
     if row is None:
         raise SystemExit(f"No ensemble file found matching '{specifier}'.")
-    return row
+    return dict(zip(_ENSEMBLE_FILE_KEYS, row))
 
 
 def load_daily_consensus(
-    ensemble_db: Path, file_id: int
+    ensemble_dataset_root, file_id: int
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Return (consensus, spread) arrays shaped (31 days, 12 months).
 
@@ -98,55 +111,69 @@ def load_daily_consensus(
     consensus = np.full((31, 12), np.nan)
     spread = np.full((31, 12), np.nan)
     grouped: Dict[Tuple[int, int], List[float]] = {}
-    with _connect_immutable(ensemble_db) as conn:
-        for row in conn.execute(
-            "SELECT day_of_month, month, rainfall FROM ensemble_daily_values "
+    daily_glob = _table_glob(ensemble_dataset_root, "ensemble_daily_values")
+    conn = duckdb.connect()
+    try:
+        rows = conn.execute(
+            "SELECT day_of_month, month, rainfall "
+            f"FROM read_parquet('{daily_glob}') "
             "WHERE file_id = ? AND rainfall IS NOT NULL",
-            (file_id,),
-        ):
-            day = int(row["day_of_month"])
-            month = int(row["month"])
-            if 1 <= day <= 31 and 1 <= month <= 12:
-                grouped.setdefault((day, month), []).append(float(row["rainfall"]))
+            [file_id],
+        ).fetchall()
+    finally:
+        conn.close()
+    for day, month, rainfall in rows:
+        day = int(day)
+        month = int(month)
+        if 1 <= day <= 31 and 1 <= month <= 12:
+            grouped.setdefault((day, month), []).append(float(rainfall))
     for (day, month), values in grouped.items():
         consensus[day - 1, month - 1] = median(values)
         spread[day - 1, month - 1] = max(values) - min(values)
     return consensus, spread
 
 
-def load_monthly_consensus(comparison_db: Path, ensemble_vector_id: str) -> List[Optional[float]]:
+def load_monthly_consensus(
+    comparison_root, ensemble_vector_id: str
+) -> List[Optional[float]]:
     """Return the 12-month ensemble consensus monthly-total vector."""
-    with _connect_immutable(comparison_db) as conn:
+    glob = _table_glob(comparison_root, "ensemble_consensus_vectors")
+    conn = duckdb.connect()
+    try:
         row = conn.execute(
-            "SELECT raw_vector_json FROM ensemble_consensus_vectors "
-            "WHERE ensemble_vector_id = ?",
-            (ensemble_vector_id,),
+            f"SELECT raw_vector_json FROM read_parquet('{glob}') "
+            "WHERE ensemble_vector_id = ? LIMIT 1",
+            [ensemble_vector_id],
         ).fetchone()
+    finally:
+        conn.close()
     if row is None:
         raise SystemExit(
             f"No comparison vector for '{ensemble_vector_id}'. "
-            "Has build_comparison_vectors been run?"
+            "Has build_comparison_vectors_parquet been run?"
         )
-    return json.loads(row["raw_vector_json"])
+    return json.loads(row[0])
 
 
 def load_ensemble_member_monthly(
-    comparison_db: Path, ensemble_vector_id: str
+    comparison_root, ensemble_vector_id: str
 ) -> List[List[Optional[float]]]:
     """Return per-member monthly totals as a list of 5 lists (each 12 values)."""
     members: Dict[int, Dict[int, Optional[float]]] = {}
-    with _connect_immutable(comparison_db) as conn:
+    glob = _table_glob(comparison_root, "ensemble_member_monthly_values")
+    conn = duckdb.connect()
+    try:
         rows = conn.execute(
             "SELECT month, ensemble_member, total "
-            "FROM ensemble_member_monthly_values "
+            f"FROM read_parquet('{glob}') "
             "WHERE ensemble_vector_id = ? "
             "ORDER BY ensemble_member, month",
-            (ensemble_vector_id,),
+            [ensemble_vector_id],
         ).fetchall()
-    for row in rows:
-        m = int(row["month"])
-        mbr = int(row["ensemble_member"])
-        members.setdefault(mbr, {})[m] = row["total"]
+    finally:
+        conn.close()
+    for month, mbr, total in rows:
+        members.setdefault(int(mbr), {})[int(month)] = total
     result = []
     for mbr in sorted(members.keys()):
         result.append([members[mbr].get(mo) for mo in range(1, 13)])
@@ -154,44 +181,51 @@ def load_ensemble_member_monthly(
 
 
 def load_matches(
-    comparison_db: Path, ensemble_vector_id: str, top_k: int
+    comparison_root, ensemble_vector_id: str, top_k: int
 ) -> List[dict]:
     """Return the top-K matching RR station-years (latest session)."""
     matches: List[dict] = []
-    with _connect_immutable(comparison_db) as conn:
+    matches_glob = _table_glob(comparison_root, "similarity_matches")
+    sessions_glob = _table_glob(comparison_root, "similarity_sessions")
+    rr_glob = _table_glob(comparison_root, "rr_monthly_vectors")
+    conn = duckdb.connect()
+    try:
         session_id = conn.execute(
-            "SELECT MAX(session_id) FROM similarity_sessions"
+            f"SELECT MAX(session_id) FROM read_parquet('{sessions_glob}')"
         ).fetchone()[0]
         if session_id is None:
             raise SystemExit("No similarity_sessions found; run the matcher first.")
         rows = conn.execute(
-            """
-                 SELECT m.query_rank, m.exact_agreement_count,
-                     m.cosine_similarity, m.adjusted_score,
+            f"""
+            SELECT m.query_rank, m.exact_agreement_count,
+                   m.cosine_similarity, m.adjusted_score,
                    m.overlap_months, r.location_name, r.station_number, r.year,
                    r.latitude, r.longitude, r.raw_vector_json
-            FROM similarity_matches m
-            JOIN rr_monthly_vectors r ON r.rr_vector_id = m.rr_vector_id
+            FROM read_parquet('{matches_glob}') m
+            JOIN read_parquet('{rr_glob}') r ON r.rr_vector_id = m.rr_vector_id
             WHERE m.session_id = ? AND m.ensemble_vector_id = ?
             ORDER BY m.query_rank
             LIMIT ?
             """,
-            (session_id, ensemble_vector_id, top_k),
+            [session_id, ensemble_vector_id, top_k],
         ).fetchall()
-    for row in rows:
+    finally:
+        conn.close()
+    for (rank, exact, cosine, adjusted, overlap, location_name,
+         station_number, year, latitude, longitude, raw_vector_json) in rows:
         matches.append(
             {
-                "rank": row["query_rank"],
-                "exact": row["exact_agreement_count"],
-                "cosine": row["cosine_similarity"],
-                "adjusted": row["adjusted_score"],
-                "overlap": row["overlap_months"],
-                "location_name": row["location_name"],
-                "station_number": row["station_number"],
-                "year": row["year"],
-                "latitude": row["latitude"],
-                "longitude": row["longitude"],
-                "monthly": json.loads(row["raw_vector_json"]),
+                "rank": rank,
+                "exact": exact,
+                "cosine": cosine,
+                "adjusted": adjusted,
+                "overlap": overlap,
+                "location_name": location_name,
+                "station_number": station_number,
+                "year": year,
+                "latitude": latitude,
+                "longitude": longitude,
+                "monthly": json.loads(raw_vector_json),
             }
         )
     return matches
@@ -208,6 +242,16 @@ def resolve_image_path(source_path: str, file_name: str) -> Optional[Path]:
         candidate = images_dir / f"{stem}{ext}"
         if candidate.exists():
             return candidate
+
+    # Full operational datasets may keep images under batch_* subdirectories,
+    # e.g. operational_full/batch_00/images/<stem>.jpg.
+    parent_root = src.parent.parent
+    for batch_dir in sorted(parent_root.glob("batch_*")):
+        batch_images = batch_dir / "images"
+        for ext in (".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff"):
+            candidate = batch_images / f"{stem}{ext}"
+            if candidate.exists():
+                return candidate
     return None
 
 
@@ -399,8 +443,8 @@ def _plot_map(fig, rect, matches) -> None:
 def build_figure(
     *,
     specifier: str,
-    ensemble_db: Path,
-    comparison_db: Path,
+    ensemble_dataset_root,
+    comparison_root,
     top_k: int,
     comparison_rank: int = 1,
     output_path: Path,
@@ -408,18 +452,20 @@ def build_figure(
     from matplotlib.backends.backend_agg import FigureCanvasAgg as FigureCanvas
     from matplotlib.figure import Figure
 
-    file_row = lookup_ensemble_file(ensemble_db, specifier)
+    file_row = lookup_ensemble_file(ensemble_dataset_root, specifier)
     file_id = int(file_row["file_id"])
     ensemble_vector_id = f"ensemble_file::{file_id}"
 
-    consensus_daily, spread_daily = load_daily_consensus(ensemble_db, file_id)
-    consensus_monthly = load_monthly_consensus(comparison_db, ensemble_vector_id)
-    member_monthly = load_ensemble_member_monthly(comparison_db, ensemble_vector_id)
+    consensus_daily, spread_daily = load_daily_consensus(
+        ensemble_dataset_root, file_id
+    )
+    consensus_monthly = load_monthly_consensus(comparison_root, ensemble_vector_id)
+    member_monthly = load_ensemble_member_monthly(comparison_root, ensemble_vector_id)
     if comparison_rank < 1:
         raise SystemExit("comparison_rank must be >= 1")
     # Ensure the selected rank is available even if top_k is smaller.
     match_limit = max(top_k, comparison_rank)
-    matches = load_matches(comparison_db, ensemble_vector_id, match_limit)
+    matches = load_matches(comparison_root, ensemble_vector_id, match_limit)
     image_path = resolve_image_path(file_row["source_path"], file_row["file_name"])
     selected_match = next((m for m in matches if int(m["rank"]) == comparison_rank), None)
 
@@ -465,16 +511,23 @@ def build_figure(
     return output_path
 
 
-def _default_paths() -> Tuple[Path, Path]:
-    pdir = _pdir()
-    return (
-        pdir / "ensemble_transcriptions.sqlite",
-        pdir / "monthly_similarity.sqlite",
+def _default_roots() -> Tuple[Path, Path]:
+    """Default (ensemble_dataset_root, comparison_root) parquet paths."""
+    import sys
+
+    src = Path(__file__).resolve().parents[2] / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    from rainfall_rescue_sqlite.parquet_ingest import default_ensemble_parquet_root
+    from rainfall_rescue_sqlite.parquet_similarity import (
+        default_comparison_parquet_root,
     )
+
+    return default_ensemble_parquet_root(), default_comparison_parquet_root()
 
 
 def main() -> None:
-    ens_default, cmp_default = _default_paths()
+    ens_default, cmp_default = _default_roots()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--specifier", required=True,
@@ -482,12 +535,12 @@ def main() -> None:
     )
     parser.add_argument("--top-k", type=int, default=5, help="Matches to display")
     parser.add_argument(
-        "--ensemble-db", type=Path, default=ens_default,
-        help=f"ensemble_transcriptions.sqlite (default: {ens_default})",
+        "--ensemble-root", type=Path, default=ens_default,
+        help=f"Ensemble parquet dataset root (default: {ens_default})",
     )
     parser.add_argument(
-        "--comparison-db", type=Path, default=cmp_default,
-        help=f"monthly_similarity.sqlite (default: {cmp_default})",
+        "--comparison-root", type=Path, default=cmp_default,
+        help=f"Comparison/similarity parquet root (default: {cmp_default})",
     )
     parser.add_argument(
         "--comparison-rank",
@@ -504,8 +557,8 @@ def main() -> None:
     output = args.output or Path(f"{args.specifier}_diagnostic.webp")
     result = build_figure(
         specifier=args.specifier,
-        ensemble_db=args.ensemble_db,
-        comparison_db=args.comparison_db,
+        ensemble_dataset_root=args.ensemble_root,
+        comparison_root=args.comparison_root,
         top_k=args.top_k,
         comparison_rank=args.comparison_rank,
         output_path=output,

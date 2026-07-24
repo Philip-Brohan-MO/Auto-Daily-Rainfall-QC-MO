@@ -13,6 +13,9 @@ dependencies:
   - json5  
 # Data storage in SQLite
   - sqlite=3.53
+  - duckdb
+  - pyarrow
+  - pandas
 
 # Some stuff is pip-only
   - pip

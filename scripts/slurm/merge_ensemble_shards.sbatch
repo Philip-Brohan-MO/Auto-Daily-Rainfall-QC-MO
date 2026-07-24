@@ -19,11 +19,14 @@ set_thread_env
 
 cd "${REPO_ROOT}"
 
-echo "Merging ${ENSEMBLE_NUM_SHARDS} ensemble shards from ${ENSEMBLE_SHARD_DIR} into ${ENSEMBLE_DB}"
+echo "Merging ${ENSEMBLE_NUM_SHARDS} ensemble shards from ${ENSEMBLE_SHARD_DIR} into ${ENSEMBLE_PARQUET_ROOT}"
 run_py scripts/merge_ensemble_shards.py \
-    --ensemble-db-path "${ENSEMBLE_DB}" \
+    --backend duckdb \
+    --dataset-root "${ENSEMBLE_PARQUET_ROOT}" \
     --shard-dir "${ENSEMBLE_SHARD_DIR}" \
     ${ENSEMBLE_ROOT:+--ensemble-root "${ENSEMBLE_ROOT}"} \
+    ${ENSEMBLE_MAX_FILES:+--max-files "${ENSEMBLE_MAX_FILES}"} \
+    --overwrite \
     --expected-shards "${ENSEMBLE_NUM_SHARDS}"
 
 echo "Ensemble merge complete."

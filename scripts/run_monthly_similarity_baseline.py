@@ -10,6 +10,11 @@ from src.rainfall_rescue_sqlite.comparison_baseline import (
     build_comparison_vectors,
     run_baseline_matching,
 )
+from src.rainfall_rescue_sqlite.parquet_similarity import (
+    build_comparison_vectors_parquet,
+    default_roots,
+    run_baseline_matching_parquet,
+)
 
 
 def _default_rr_db_path() -> Path:
@@ -38,6 +43,12 @@ def parse_args() -> argparse.Namespace:
         description="Build and query baseline monthly-profile similarity index"
     )
     parser.add_argument(
+        "--backend",
+        choices=("duckdb", "sqlite"),
+        default="duckdb",
+        help="Storage backend for similarity artifacts",
+    )
+    parser.add_argument(
         "--rr-db-path",
         type=Path,
         default=None,
@@ -54,6 +65,24 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Path to output comparison SQLite",
+    )
+    parser.add_argument(
+        "--rr-dataset-root",
+        type=Path,
+        default=None,
+        help="Path to Rainfall Rescue Parquet dataset root",
+    )
+    parser.add_argument(
+        "--ensemble-dataset-root",
+        type=Path,
+        default=None,
+        help="Path to ensemble Parquet dataset root",
+    )
+    parser.add_argument(
+        "--comparison-root",
+        type=Path,
+        default=None,
+        help="Path to output comparison Parquet dataset root",
     )
     parser.add_argument(
         "--skip-build",
@@ -107,23 +136,58 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    rr_db_path = args.rr_db_path or _default_rr_db_path()
-    ensemble_db_path = args.ensemble_db_path or _default_ensemble_db_path()
-    comparison_db_path = args.comparison_db_path or _default_comparison_db_path()
+    if args.backend == "sqlite":
+        rr_db_path = args.rr_db_path or _default_rr_db_path()
+        ensemble_db_path = args.ensemble_db_path or _default_ensemble_db_path()
+        comparison_db_path = args.comparison_db_path or _default_comparison_db_path()
+
+        if not args.skip_build:
+            build_result = build_comparison_vectors(
+                rr_db_path=rr_db_path,
+                ensemble_db_path=ensemble_db_path,
+                comparison_db_path=comparison_db_path,
+            )
+            print("Vector build completed")
+            print(f"  Comparison DB: {build_result.comparison_db_path}")
+            print(f"  RR vectors: {build_result.rr_vectors}")
+            print(f"  Ensemble consensus vectors: {build_result.ensemble_vectors}")
+
+        match_result = run_baseline_matching(
+            comparison_db_path=comparison_db_path,
+            top_k=args.top_k,
+            min_overlap=args.min_overlap,
+            uncertainty_weight=args.uncertainty_weight,
+            max_ensemble_queries=args.max_ensemble_queries,
+            max_rr_candidates=args.max_rr_candidates,
+            batch_size=args.batch_size,
+            progress_interval=args.progress_interval,
+        )
+        print("Matching completed")
+        print(f"  Session ID: {match_result.session_id}")
+        print(f"  Ensemble queries: {match_result.ensemble_queries}")
+        print(f"  RR candidates: {match_result.rr_candidates}")
+        print(f"  Matches written: {match_result.matches_written}")
+        return
+
+    default_rr_root, default_ensemble_root, default_comparison_root = default_roots()
+    rr_dataset_root = args.rr_dataset_root or default_rr_root
+    ensemble_dataset_root = args.ensemble_dataset_root or default_ensemble_root
+    comparison_root = args.comparison_root or default_comparison_root
 
     if not args.skip_build:
-        build_result = build_comparison_vectors(
-            rr_db_path=rr_db_path,
-            ensemble_db_path=ensemble_db_path,
-            comparison_db_path=comparison_db_path,
+        build_result = build_comparison_vectors_parquet(
+            rr_dataset_root=rr_dataset_root,
+            ensemble_dataset_root=ensemble_dataset_root,
+            comparison_root=comparison_root,
+            overwrite=True,
         )
         print("Vector build completed")
-        print(f"  Comparison DB: {build_result.comparison_db_path}")
+        print(f"  Comparison root: {build_result.comparison_root}")
         print(f"  RR vectors: {build_result.rr_vectors}")
         print(f"  Ensemble consensus vectors: {build_result.ensemble_vectors}")
 
-    match_result = run_baseline_matching(
-        comparison_db_path=comparison_db_path,
+    match_result = run_baseline_matching_parquet(
+        comparison_root=comparison_root,
         top_k=args.top_k,
         min_overlap=args.min_overlap,
         uncertainty_weight=args.uncertainty_weight,

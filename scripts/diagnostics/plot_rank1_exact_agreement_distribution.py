@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 """Plot exact-agreement distribution for matches at a selected rank.
 
-Builds a bar chart of `exact_agreement_count` across all matches with a chosen
-`query_rank` for a similarity session in `monthly_similarity.sqlite`.
+Builds a bar chart of exact_agreement_count across all matches with a chosen
+query_rank for a similarity session.
 
 Example:
     python scripts/diagnostics/plot_rank1_exact_agreement_distribution.py \
@@ -17,6 +17,10 @@ import sqlite3
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import duckdb
+
+from src.rainfall_rescue_sqlite.parquet_similarity import default_comparison_parquet_root
+
 
 def _pdir() -> Path:
     pdir = os.getenv("PDIR")
@@ -27,6 +31,10 @@ def _pdir() -> Path:
 
 def _default_db_path() -> Path:
     return _pdir() / "monthly_similarity.sqlite"
+
+
+def _glob_sql(dir_path: Path) -> str:
+    return str((dir_path / "*.parquet").resolve())
 
 
 def _connect_immutable(path: Path) -> sqlite3.Connection:
@@ -71,6 +79,49 @@ def load_distribution(
             f"No rank-{rank} matches found for session {selected_session}."
         )
     return selected_session, counts, total
+
+
+def load_distribution_parquet(
+    comparison_root: Path,
+    session_id: Optional[int],
+    rank: int,
+) -> Tuple[int, Dict[int, int], int]:
+    """Return (session_id, counts_by_exact, total_rows_for_rank) from parquet."""
+    if rank < 1:
+        raise SystemExit("Rank must be >= 1.")
+
+    conn = duckdb.connect()
+    try:
+        selected_session = session_id
+        if selected_session is None:
+            row = conn.execute(
+                f"SELECT MAX(session_id) FROM read_parquet('{_glob_sql(comparison_root / 'similarity_sessions')}')"
+            ).fetchone()
+            selected_session = row[0] if row else None
+
+        if selected_session is None:
+            raise SystemExit("No similarity sessions found.")
+
+        rows = conn.execute(
+            f"""
+            SELECT exact_agreement_count, COUNT(*) AS n
+            FROM read_parquet('{_glob_sql(comparison_root / 'similarity_matches')}')
+            WHERE session_id = ? AND query_rank = ?
+            GROUP BY exact_agreement_count
+            ORDER BY exact_agreement_count
+            """,
+            [int(selected_session), int(rank)],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    counts = {int(r[0]): int(r[1]) for r in rows}
+    total = sum(counts.values())
+    if total == 0:
+        raise SystemExit(
+            f"No rank-{rank} matches found for session {selected_session}."
+        )
+    return int(selected_session), counts, total
 
 
 def plot_distribution(
@@ -132,12 +183,25 @@ def plot_distribution(
 
 def main() -> None:
     default_db = _default_db_path()
+    default_root = default_comparison_parquet_root()
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--backend",
+        choices=("duckdb", "sqlite"),
+        default="duckdb",
+        help="Storage backend for similarity outputs",
+    )
     parser.add_argument(
         "--comparison-db",
         type=Path,
         default=default_db,
         help=f"Path to monthly_similarity.sqlite (default: {default_db})",
+    )
+    parser.add_argument(
+        "--comparison-root",
+        type=Path,
+        default=default_root,
+        help=f"Path to monthly_similarity_parquet root (default: {default_root})",
     )
     parser.add_argument(
         "--session-id",
@@ -159,7 +223,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    session_id, counts, total = load_distribution(args.comparison_db, args.session_id, args.rank)
+    if args.backend == "sqlite":
+        session_id, counts, total = load_distribution(args.comparison_db, args.session_id, args.rank)
+    else:
+        session_id, counts, total = load_distribution_parquet(
+            args.comparison_root,
+            args.session_id,
+            args.rank,
+        )
     result = plot_distribution(counts, total, session_id, args.rank, args.output)
     print(f"Wrote {result}")
 

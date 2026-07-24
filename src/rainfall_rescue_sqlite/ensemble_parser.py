@@ -140,7 +140,7 @@ def parse_ensemble_json(path: Path) -> ParsedEnsembleFile:
     year_start, year_end, descriptor, section_id = _parse_filename(path.stem)
     metadata = EnsembleFileMetadata(
         file_name=path.name,
-        source_path=str(path),
+        source_path=str(path.resolve()),
         year_start=year_start,
         year_end=year_end,
         descriptor=descriptor,

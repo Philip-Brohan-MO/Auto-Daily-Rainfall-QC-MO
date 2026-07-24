@@ -20,14 +20,15 @@ SLURM_DIR="${RQC_SLURM_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 source "${SLURM_DIR}/config.sh"
 set_thread_env
 
-mkdir -p "${SHARD_DIR}"
+mkdir -p "${SIMILARITY_SHARD_DIR}"
 
 cd "${REPO_ROOT}"
 
 echo "Shard ${SLURM_ARRAY_TASK_ID}/${NUM_SHARDS} matching against all RR candidates"
 run_py scripts/run_similarity_shard.py \
-    --comparison-db-path "${COMPARISON_DB}" \
-    --shard-dir "${SHARD_DIR}" \
+    --backend duckdb \
+    --comparison-root "${COMPARISON_PARQUET_ROOT}" \
+    --shard-dir "${SIMILARITY_SHARD_DIR}" \
     --num-shards "${NUM_SHARDS}" \
     --shard-index "${SLURM_ARRAY_TASK_ID}" \
     --top-k "${TOP_K}" \

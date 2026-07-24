@@ -449,7 +449,7 @@ def merge_ensemble_shards(
 
 def default_ensemble_root() -> Path:
     """Get default ensemble transcriptions root directory."""
-    override = os.environ.get("ENSEMBLE_TRANSCRIPTIONS_ROOT")
+    override = os.environ.get("ENSEMBLE_ROOT") or os.environ.get("ENSEMBLE_TRANSCRIPTIONS_ROOT")
     if override:
         return Path(override)
     return DEFAULT_ENSEMBLE_ROOT

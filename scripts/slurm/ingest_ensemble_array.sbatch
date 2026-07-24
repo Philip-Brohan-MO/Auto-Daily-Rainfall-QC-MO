@@ -25,11 +25,23 @@ mkdir -p "${ENSEMBLE_SHARD_DIR}"
 cd "${REPO_ROOT}"
 
 echo "Ensemble shard ${SLURM_ARRAY_TASK_ID}/${ENSEMBLE_NUM_SHARDS} ingesting its JSON slice"
+
+ROOT_FLAG=()
+if [[ -n "${ENSEMBLE_ROOT}" ]]; then
+    ROOT_FLAG=(--ensemble-root "${ENSEMBLE_ROOT}")
+fi
+
+MAX_FILES_FLAG=()
+if [[ -n "${ENSEMBLE_MAX_FILES}" ]]; then
+    MAX_FILES_FLAG=(--max-files "${ENSEMBLE_MAX_FILES}")
+fi
+
 run_py scripts/run_ensemble_ingest_shard.py \
+    --backend duckdb \
     --shard-dir "${ENSEMBLE_SHARD_DIR}" \
     --num-shards "${ENSEMBLE_NUM_SHARDS}" \
     --shard-index "${SLURM_ARRAY_TASK_ID}" \
-    ${ENSEMBLE_ROOT:+--ensemble-root "${ENSEMBLE_ROOT}"} \
-    ${ENSEMBLE_MAX_FILES:+--max-files "${ENSEMBLE_MAX_FILES}"}
+    "${ROOT_FLAG[@]}" \
+    "${MAX_FILES_FLAG[@]}"
 
 echo "Ensemble shard ${SLURM_ARRAY_TASK_ID} complete."

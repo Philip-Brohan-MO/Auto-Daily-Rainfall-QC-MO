@@ -11,8 +11,10 @@ computes the per-station **consensus** daily rainfall for that day (the median
 over the 5 ensemble members) and plots each station on a map of the UK, coloured
 by its rainfall value.
 
-All data comes from ``ensemble_transcriptions.sqlite`` (built under ``$PDIR``),
-using the metadata written by ``assign_ensemble_metadata``.
+All data comes from the parquet datasets (built under ``$PDIR``): matched
+locations from the comparison ``ensemble_metadata`` table (written by
+``assign_ensemble_metadata_parquet``) and daily rainfall from the ensemble
+``ensemble_daily_values`` table.
 
 Example
 -------
@@ -24,11 +26,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import sqlite3
 from datetime import date
 from pathlib import Path
-from statistics import median
 from typing import List, NamedTuple, Optional, Tuple
+
+import duckdb
 
 
 # --------------------------------------------------------------------------- #
@@ -41,11 +43,9 @@ def _pdir() -> Path:
     return Path(pdir)
 
 
-def _connect_immutable(path: Path) -> sqlite3.Connection:
-    """Open a SQLite DB read-only (works on shared cluster filesystems)."""
-    conn = sqlite3.connect(f"file:{path}?immutable=1", uri=True)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _table_glob(root, table: str) -> str:
+    """Glob pattern for every parquet shard of ``table`` under ``root``."""
+    return f"{Path(root)}/{table}/*.parquet"
 
 
 class DailyRecord(NamedTuple):
@@ -62,72 +62,96 @@ class DailyRecord(NamedTuple):
     value: Optional[float]
 
 
+def _resolve_session_id(conn: duckdb.DuckDBPyConnection, metadata_glob: str,
+                        session_id: Optional[int]) -> Optional[int]:
+    """Return ``session_id`` or, if ``None``, the latest metadata session."""
+    if session_id is not None:
+        return session_id
+    return conn.execute(
+        f"SELECT MAX(match_source_session_id) FROM read_parquet('{metadata_glob}')"
+    ).fetchone()[0]
+
+
 def load_daily_records_for_date(
-    ensemble_db: Path, year: int, month: int, day: int
+    *,
+    ensemble_dataset_root,
+    comparison_root,
+    year: int,
+    month: int,
+    day: int,
+    session_id: Optional[int] = None,
 ) -> List[DailyRecord]:
     """Return a ``DailyRecord`` for every located station on one date.
 
     Only ensemble files whose ``matched_year`` equals ``year`` and which carry an
-    assigned latitude/longitude are considered. The consensus is the median over
-    the ensemble members present for that day-of-month / month cell; a station
-    with no value for the day has ``value=None``.
+    assigned latitude/longitude (from the comparison ``ensemble_metadata`` table)
+    are considered. The consensus is the median over the ensemble members present
+    for that day-of-month / month cell; a station with no value for the day has
+    ``value=None``.
 
-    The lookup is done in two steps so it can drive from the (small) set of
-    located files for the year and then seek the daily values by the
-    ``(file_id, day_of_month, month)`` primary-key prefix. A single JOIN lets the
-    planner scan every file's values for the day/month instead, which is far
-    slower on the 80M-row daily table.
+    Matched locations come from ``ensemble_metadata`` under ``comparison_root``
+    and the daily values from ``ensemble_daily_values`` under
+    ``ensemble_dataset_root``. When ``session_id`` is ``None`` the latest
+    metadata session is used.
     """
-    with _connect_immutable(ensemble_db) as conn:
-        located = conn.execute(
-            """
-            SELECT file_id, file_name, matched_location_name,
-                   matched_latitude, matched_longitude
-            FROM ensemble_files
-            WHERE matched_year = ?
-              AND matched_latitude IS NOT NULL
-              AND matched_longitude IS NOT NULL
-            """,
-            (year,),
-        ).fetchall()
-        if not located:
+    metadata_glob = _table_glob(comparison_root, "ensemble_metadata")
+    daily_glob = _table_glob(ensemble_dataset_root, "ensemble_daily_values")
+    conn = duckdb.connect()
+    try:
+        session_id = _resolve_session_id(conn, metadata_glob, session_id)
+        if session_id is None:
             return []
-
-        records: List[DailyRecord] = []
-        for r in located:
-            file_id = int(r["file_id"])
-            lat = float(r["matched_latitude"])
-            lon = float(r["matched_longitude"])
-            # A single-file equality lets the planner use the daily-values
-            # primary key (file_id, day_of_month, month, ...) directly.
-            values = [
-                float(v[0])
-                for v in conn.execute(
-                    """
-                    SELECT rainfall
-                    FROM ensemble_daily_values
-                    WHERE file_id = ?
-                      AND day_of_month = ?
-                      AND month = ?
-                      AND rainfall IS NOT NULL
-                    """,
-                    (file_id, day, month),
-                )
-            ]
-            records.append(
-                DailyRecord(
-                    file_name=str(r["file_name"]),
-                    location_name=r["matched_location_name"],
-                    latitude=lat,
-                    longitude=lon,
-                    value=float(median(values)) if values else None,
-                )
+        rows = conn.execute(
+            f"""
+            WITH meta AS (
+                SELECT file_id, file_name, matched_location_name,
+                       matched_latitude, matched_longitude
+                FROM read_parquet('{metadata_glob}')
+                WHERE matched_year = ?
+                  AND matched_latitude IS NOT NULL
+                  AND matched_longitude IS NOT NULL
+                  AND match_source_session_id = ?
+            ),
+            daily AS (
+                SELECT file_id, median(rainfall) AS value
+                FROM read_parquet('{daily_glob}')
+                WHERE day_of_month = ? AND month = ? AND rainfall IS NOT NULL
+                  AND file_id IN (SELECT file_id FROM meta)
+                GROUP BY file_id
             )
+            SELECT meta.file_name, meta.matched_location_name,
+                   meta.matched_latitude, meta.matched_longitude, daily.value
+            FROM meta
+            LEFT JOIN daily USING (file_id)
+            ORDER BY meta.file_id
+            """,
+            [year, session_id, day, month],
+        ).fetchall()
+    finally:
+        conn.close()
+
+    records: List[DailyRecord] = []
+    for file_name, location_name, lat, lon, value in rows:
+        records.append(
+            DailyRecord(
+                file_name=str(file_name),
+                location_name=location_name,
+                latitude=float(lat),
+                longitude=float(lon),
+                value=float(value) if value is not None else None,
+            )
+        )
     return records
 
 
 def load_daily_rainfall_for_date(
-    ensemble_db: Path, year: int, month: int, day: int
+    *,
+    ensemble_dataset_root,
+    comparison_root,
+    year: int,
+    month: int,
+    day: int,
+    session_id: Optional[int] = None,
 ) -> Tuple[List[Tuple[float, float, float]], List[Tuple[float, float]]]:
     """Return located stations for one date, split into valued and null.
 
@@ -140,7 +164,14 @@ def load_daily_rainfall_for_date(
     """
     points: List[Tuple[float, float, float]] = []
     null_points: List[Tuple[float, float]] = []
-    for rec in load_daily_records_for_date(ensemble_db, year, month, day):
+    for rec in load_daily_records_for_date(
+        ensemble_dataset_root=ensemble_dataset_root,
+        comparison_root=comparison_root,
+        year=year,
+        month=month,
+        day=day,
+        session_id=session_id,
+    ):
         if rec.value is None:
             null_points.append((rec.latitude, rec.longitude))
         else:
@@ -154,8 +185,10 @@ def load_daily_rainfall_for_date(
 def build_figure(
     *,
     target_date: date,
-    ensemble_db: Path,
+    ensemble_dataset_root,
+    comparison_root,
     output_path: Path,
+    session_id: Optional[int] = None,
     cmap: str = "YlGnBu",
     vmax: float = 2.0,
     marker_size: float = 9.0,
@@ -169,7 +202,12 @@ def build_figure(
     from cartopy import feature as cfeature
 
     records = load_daily_records_for_date(
-        ensemble_db, target_date.year, target_date.month, target_date.day
+        ensemble_dataset_root=ensemble_dataset_root,
+        comparison_root=comparison_root,
+        year=target_date.year,
+        month=target_date.month,
+        day=target_date.day,
+        session_id=session_id,
     )
     if not records:
         raise SystemExit(
@@ -254,14 +292,41 @@ def _parse_date(value: str) -> date:
         ) from exc
 
 
+def _default_roots() -> Tuple[Path, Path]:
+    """Default (ensemble_dataset_root, comparison_root) parquet paths."""
+    import sys
+
+    src = Path(__file__).resolve().parents[2] / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    from rainfall_rescue_sqlite.parquet_ingest import default_ensemble_parquet_root
+    from rainfall_rescue_sqlite.parquet_similarity import (
+        default_comparison_parquet_root,
+    )
+
+    return default_ensemble_parquet_root(), default_comparison_parquet_root()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("date", type=_parse_date, help="Date to plot, as YYYY-MM-DD")
     parser.add_argument(
-        "--ensemble-db",
+        "--ensemble-root",
         type=Path,
         default=None,
-        help="Path to ensemble_transcriptions.sqlite (default: $PDIR/...)",
+        help="Ensemble parquet dataset root (default: $PDIR/...)",
+    )
+    parser.add_argument(
+        "--comparison-root",
+        type=Path,
+        default=None,
+        help="Comparison/similarity parquet root (default: $PDIR/...)",
+    )
+    parser.add_argument(
+        "--session-id",
+        type=int,
+        default=None,
+        help="Metadata session id to use (default: latest)",
     )
     parser.add_argument(
         "--output",
@@ -281,14 +346,18 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    ensemble_db = args.ensemble_db or (_pdir() / "ensemble_transcriptions.sqlite")
+    default_ensemble_root, default_comparison_root = _default_roots()
+    ensemble_dataset_root = args.ensemble_root or default_ensemble_root
+    comparison_root = args.comparison_root or default_comparison_root
     output_path = args.output or (
         _pdir() / "diagnostics" / f"daily_map_{args.date.isoformat()}.webp"
     )
 
     saved = build_figure(
         target_date=args.date,
-        ensemble_db=ensemble_db,
+        ensemble_dataset_root=ensemble_dataset_root,
+        comparison_root=comparison_root,
+        session_id=args.session_id,
         output_path=output_path,
         cmap=args.cmap,
         vmax=args.vmax,

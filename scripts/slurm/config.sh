@@ -10,11 +10,14 @@ export PDIR="${PDIR:-/data/scratch/philip.brohan/ADRQ}"
 
 export COMPARISON_DB="${PDIR}/monthly_similarity.sqlite"
 export SHARD_DIR="${PDIR}/similarity_shards"
+export COMPARISON_PARQUET_ROOT="${PDIR}/monthly_similarity_parquet"
+export SIMILARITY_SHARD_DIR="${PDIR}/similarity_shards_parquet"
 export SLURM_LOG_DIR="${PDIR}/slurm_logs"
 
 # Ensemble transcription ingest (sharded JSON -> ensemble_transcriptions.sqlite).
 export ENSEMBLE_DB="${PDIR}/ensemble_transcriptions.sqlite"
 export ENSEMBLE_SHARD_DIR="${PDIR}/ensemble_shards"
+export ENSEMBLE_PARQUET_ROOT="${PDIR}/ensemble_transcriptions_parquet"
 
 # Root of the ensemble transcription JSON tree to ingest. Set this (or the
 # legacy ENSEMBLE_TRANSCRIPTIONS_ROOT) to point at the full dataset; if left
@@ -44,15 +47,15 @@ export ENSEMBLE_MAX_FILES="${ENSEMBLE_MAX_FILES:-}"
 export SLURM_QOS="${SLURM_QOS:-normal}"
 
 export BUILD_CORES="${BUILD_CORES:-2}"
-export BUILD_MEM_MB="${BUILD_MEM_MB:-16000}"  # full dataset: ~570k ensemble vectors held in memory
-export BUILD_TIME_MIN="${BUILD_TIME_MIN:-120}"  # full dataset: ~34M member rows to read/sort
+export BUILD_MEM_MB="${BUILD_MEM_MB:-12000}"  # build streams vectors to Parquet; DuckDB memory_limit is capped to this allocation in build_vectors.sbatch
+export BUILD_TIME_MIN="${BUILD_TIME_MIN:-120}"  # full dataset: ~34M member rows aggregated in DuckDB
 
 export MATCH_CORES="${MATCH_CORES:-2}"
 export MATCH_MEM_MB="${MATCH_MEM_MB:-4000}"  # RR candidates fixed + queries streamed -> memory flat
 export MATCH_TIME_MIN="${MATCH_TIME_MIN:-60}"  # full dataset: ~12.7x queries/shard (sample ~85s -> ~15-18min)
 
 export MERGE_CORES="${MERGE_CORES:-1}"
-export MERGE_MEM_MB="${MERGE_MEM_MB:-4000}"
+export MERGE_MEM_MB="${MERGE_MEM_MB:-8000}"  # merge streams via DuckDB COPY; sort of merged rows spills to node-local scratch (see merge_shards.sbatch)
 export MERGE_TIME_MIN="${MERGE_TIME_MIN:-40}"  # full dataset: ~12.7x shard rows to combine
 
 # Ensemble-ingest stages (JSON parsing is single-threaded and I/O bound).
@@ -115,6 +118,27 @@ export RVALIDATE_TIME_MIN="${RVALIDATE_TIME_MIN:-10}"
 export RENCODE_CORES="${RENCODE_CORES:-16}"
 export RENCODE_MEM_MB="${RENCODE_MEM_MB:-32000}"
 export RENCODE_TIME_MIN="${RENCODE_TIME_MIN:-240}"
+
+# --- QC pipeline (exact monthly consistency check) ----------------------
+# Shard count, output dir, and parameters. 100 shards over ~514k file_ids
+# → ~5140 file_ids per shard (~9 min each based on smoke-test timing).
+export QC_NUM_SHARDS="${QC_NUM_SHARDS:-100}"
+export QC_SHARD_DIR="${PDIR}/qc_shards"
+export QC_TOLERANCE="${QC_TOLERANCE:-0.01}"
+# Total file_ids in the ensemble DB. Passed to each shard so it can compute
+# its start/end file_id slice.  Run:
+#   sqlite3 $PDIR/ensemble_transcriptions.sqlite \
+#       'SELECT MAX(file_id) FROM ensemble_files'
+# to refresh this number after a new ingest.
+export QC_TOTAL_FILE_IDS="${QC_TOTAL_FILE_IDS:-514000}"
+
+export QC_CORES="${QC_CORES:-1}"
+export QC_MEM_MB="${QC_MEM_MB:-8000}"
+export QC_TIME_MIN="${QC_TIME_MIN:-30}"
+
+export QC_MERGE_CORES="${QC_MERGE_CORES:-1}"
+export QC_MERGE_MEM_MB="${QC_MERGE_MEM_MB:-24000}"
+export QC_MERGE_TIME_MIN="${QC_MERGE_TIME_MIN:-180}"
 
 # --- Python runner -------------------------------------------------------
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"

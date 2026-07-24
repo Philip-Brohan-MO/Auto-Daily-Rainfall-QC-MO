@@ -104,8 +104,10 @@ gd.on('plotly_click', function (data) {
 def build_figure(
     *,
     target_date: date,
-    ensemble_db: Path,
+    ensemble_dataset_root,
+    comparison_root,
     output_path: Optional[Path] = None,
+    session_id: Optional[int] = None,
     cmap: str = "YlGnBu",
     vmax: float = 2.0,
     marker_size: float = 9.0,
@@ -128,7 +130,12 @@ def build_figure(
         return file_name[:-5] if file_name.endswith(".json") else file_name
 
     records: List[DailyRecord] = load_daily_records_for_date(
-        ensemble_db, target_date.year, target_date.month, target_date.day
+        ensemble_dataset_root=ensemble_dataset_root,
+        comparison_root=comparison_root,
+        year=target_date.year,
+        month=target_date.month,
+        day=target_date.day,
+        session_id=session_id,
     )
     if not records:
         raise SystemExit(
@@ -260,10 +267,22 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("date", type=_parse_date, help="Date to plot, as YYYY-MM-DD")
     parser.add_argument(
-        "--ensemble-db",
+        "--ensemble-root",
         type=Path,
         default=None,
-        help="Path to ensemble_transcriptions.sqlite (default: $PDIR/...)",
+        help="Ensemble parquet dataset root (default: $PDIR/...)",
+    )
+    parser.add_argument(
+        "--comparison-root",
+        type=Path,
+        default=None,
+        help="Comparison/similarity parquet root (default: $PDIR/...)",
+    )
+    parser.add_argument(
+        "--session-id",
+        type=int,
+        default=None,
+        help="Metadata session id to use (default: latest)",
     )
     parser.add_argument(
         "--output",
@@ -281,16 +300,33 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _default_roots() -> tuple:
+    """Default (ensemble_dataset_root, comparison_root) parquet paths."""
+    src = Path(__file__).resolve().parents[2] / "src"
+    if str(src) not in sys.path:
+        sys.path.insert(0, str(src))
+    from rainfall_rescue_sqlite.parquet_ingest import default_ensemble_parquet_root
+    from rainfall_rescue_sqlite.parquet_similarity import (
+        default_comparison_parquet_root,
+    )
+
+    return default_ensemble_parquet_root(), default_comparison_parquet_root()
+
+
 def main() -> None:
     args = parse_args()
-    ensemble_db = args.ensemble_db or (_pdir() / "ensemble_transcriptions.sqlite")
+    default_ensemble_root, default_comparison_root = _default_roots()
+    ensemble_dataset_root = args.ensemble_root or default_ensemble_root
+    comparison_root = args.comparison_root or default_comparison_root
     output_path = args.output or (
         _pdir() / "diagnostics" / f"daily_map_{args.date.isoformat()}.html"
     )
 
     build_figure(
         target_date=args.date,
-        ensemble_db=ensemble_db,
+        ensemble_dataset_root=ensemble_dataset_root,
+        comparison_root=comparison_root,
+        session_id=args.session_id,
         output_path=output_path,
         cmap=args.cmap,
         vmax=args.vmax,
