@@ -179,6 +179,28 @@ export REGIONAL_MERGE_CORES="${REGIONAL_MERGE_CORES:-1}"
 export REGIONAL_MERGE_MEM_MB="${REGIONAL_MERGE_MEM_MB:-24000}"
 export REGIONAL_MERGE_TIME_MIN="${REGIONAL_MERGE_TIME_MIN:-120}"
 
+# --- Secondary-QC models (QC check 2, stage 2: XGBoost expectation test) --
+# Two dependent single-node jobs:
+#   1. secondary_qc_train  -- fit model 1 (predict a station's consensus from its
+#      regional neighbour stats) and model 2 (predict model 1's absolute error)
+#      on the QC1-pass rows; calibrate the range multiplier k; persist the models.
+#   2. secondary_qc_score  -- apply the models to the QC1-fail rows and flag each
+#      pass / fail / indeterminate.
+# Training reads a month-stratified sample (SECONDARY_MAX_TRAIN_ROWS) so it fits
+# in memory; scoring streams the fail rows so its memory stays flat.
+export SECONDARY_QC_ROOT="${SECONDARY_QC_ROOT:-${PDIR}/secondary_qc_parquet}"
+export SECONDARY_MAX_TRAIN_ROWS="${SECONDARY_MAX_TRAIN_ROWS:-5000000}"
+export SECONDARY_COVERAGE_TARGET="${SECONDARY_COVERAGE_TARGET:-0.99}"
+export SECONDARY_SEED="${SECONDARY_SEED:-0}"
+
+export SECONDARY_TRAIN_CORES="${SECONDARY_TRAIN_CORES:-8}"
+export SECONDARY_TRAIN_MEM_MB="${SECONDARY_TRAIN_MEM_MB:-32000}"
+export SECONDARY_TRAIN_TIME_MIN="${SECONDARY_TRAIN_TIME_MIN:-120}"
+
+export SECONDARY_SCORE_CORES="${SECONDARY_SCORE_CORES:-4}"
+export SECONDARY_SCORE_MEM_MB="${SECONDARY_SCORE_MEM_MB:-16000}"
+export SECONDARY_SCORE_TIME_MIN="${SECONDARY_SCORE_TIME_MIN:-60}"
+
 # --- Python runner -------------------------------------------------------
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
 

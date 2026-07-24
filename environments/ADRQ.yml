@@ -16,6 +16,11 @@ dependencies:
   - duckdb
   - pyarrow
   - pandas
+  - numpy
+# Machine learning (secondary QC models)
+  - xgboost  # Gradient-boosted regressors for the secondary QC check
+  - scikit-learn  # K-fold splitting, metrics
+  - joblib  # Model persistence
 
 # Some stuff is pip-only
   - pip
