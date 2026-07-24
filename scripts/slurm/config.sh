@@ -140,6 +140,45 @@ export QC_MERGE_CORES="${QC_MERGE_CORES:-1}"
 export QC_MERGE_MEM_MB="${QC_MERGE_MEM_MB:-24000}"
 export QC_MERGE_TIME_MIN="${QC_MERGE_TIME_MIN:-180}"
 
+# --- Daily-consensus precompute (prerequisite for regional stats) ---------
+# Compute median(rainfall) per (file_id, month, day_of_month) ONCE, sharded by
+# CONTIGUOUS file_id range. Contiguous ranges let DuckDB prune ensemble_daily_
+# values row groups, so each shard's holistic median only buffers its own slice
+# and stays small. Regional stats then reads this table instead of recomputing
+# the median over a nationally-scattered neighbour pool (which OOM-kills tasks).
+export CONSENSUS_NUM_SHARDS="${CONSENSUS_NUM_SHARDS:-100}"
+export CONSENSUS_SHARD_DIR="${PDIR}/daily_consensus_shards"
+export CONSENSUS_ROOT="${PDIR}/daily_consensus_parquet"
+export CONSENSUS_TOTAL_FILE_IDS="${CONSENSUS_TOTAL_FILE_IDS:-680000}"
+export CONSENSUS_CORES="${CONSENSUS_CORES:-1}"
+export CONSENSUS_MEM_MB="${CONSENSUS_MEM_MB:-12000}"
+export CONSENSUS_TIME_MIN="${CONSENSUS_TIME_MIN:-30}"
+export CONSENSUS_MERGE_CORES="${CONSENSUS_MERGE_CORES:-1}"
+export CONSENSUS_MERGE_MEM_MB="${CONSENSUS_MERGE_MEM_MB:-24000}"
+export CONSENSUS_MERGE_TIME_MIN="${CONSENSUS_MERGE_TIME_MIN:-120}"
+
+# --- Regional-stats pipeline (QC check 2, stage 1: neighbour statistics) --
+# For every located station-day, compute neighbour count / median / MAD at
+# 20 km and 50 km from station-days that passed QC check 1. Sharded by target
+# file_id; each shard scopes its own neighbour pool (same year, target bounding
+# box + 50 km). The daily consensus is READ from the precomputed CONSENSUS_ROOT
+# table (build it first with submit_daily_consensus.sh), which keeps memory
+# bounded -- recomputing the median inline OOM-kills nationally-spread shards.
+export REGIONAL_NUM_SHARDS="${REGIONAL_NUM_SHARDS:-200}"
+export REGIONAL_SHARD_DIR="${PDIR}/regional_stats_shards"
+# Total file_ids (targets are the located subset). Passed to each shard to
+# compute its start/end slice. Refresh with the max file_id from the ensemble
+# dataset (see the "Max file_id" cell in notebooks/qc_RR_monthly_total.ipynb).
+export REGIONAL_TOTAL_FILE_IDS="${REGIONAL_TOTAL_FILE_IDS:-680000}"
+
+export REGIONAL_CORES="${REGIONAL_CORES:-1}"
+export REGIONAL_MEM_MB="${REGIONAL_MEM_MB:-12000}"
+export REGIONAL_TIME_MIN="${REGIONAL_TIME_MIN:-90}"
+
+export REGIONAL_MERGE_CORES="${REGIONAL_MERGE_CORES:-1}"
+export REGIONAL_MERGE_MEM_MB="${REGIONAL_MERGE_MEM_MB:-24000}"
+export REGIONAL_MERGE_TIME_MIN="${REGIONAL_MERGE_TIME_MIN:-120}"
+
 # --- Python runner -------------------------------------------------------
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
 
