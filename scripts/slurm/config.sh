@@ -220,6 +220,54 @@ export SEF_CORES="${SEF_CORES:-1}"
 export SEF_MEM_MB="${SEF_MEM_MB:-8000}"
 export SEF_TIME_MIN="${SEF_TIME_MIN:-30}"
 
+# --- SEF rainfall animation pipeline ------------------------------------
+# Interpolated daily-rainfall map animation built from the exported SEF .tsv
+# files ONLY (precompute -> render array -> validate -> encode). Stations that
+# passed either QC check are drawn with their millimetre value; stations that
+# failed BOTH checks are drawn as red error crosses. Reads SEF_OUTPUT_ROOT (build
+# it first with submit_sef_export.sh). Frames are rendered in parallel across
+# SEFANIM_NUM_SHARDS array tasks, then encoded once to MP4.
+export SEFANIM_DIR="${SEFANIM_DIR:-${PDIR}/sef_animation}"
+export SEFANIM_MANIFEST="${SEFANIM_MANIFEST:-${SEFANIM_DIR}/manifest.json}"
+export SEFANIM_FRAME_DIR="${SEFANIM_FRAME_DIR:-${SEFANIM_DIR}/frames}"
+export SEFANIM_SEF_ROOT="${SEFANIM_SEF_ROOT:-${SEF_OUTPUT_ROOT}}"
+
+# Date range and interpolation density. Defaults target the 1931 test range;
+# override for the full available span.
+export SEFANIM_DATE_START="${SEFANIM_DATE_START:-1931-01-01}"
+export SEFANIM_DATE_END="${SEFANIM_DATE_END:-1931-12-31}"
+export SEFANIM_FRAMES_PER_DAY="${SEFANIM_FRAMES_PER_DAY:-6}"
+export SEFANIM_FPS="${SEFANIM_FPS:-30}"
+export SEFANIM_CMAP="${SEFANIM_CMAP:-YlGnBu}"
+# SEF values are millimetres, so the colour scale maxes out much higher than the
+# inch-scaled ensemble animation (2 in ~= 50 mm).
+export SEFANIM_VMAX="${SEFANIM_VMAX:-50.0}"
+export SEFANIM_MARKER_SIZE="${SEFANIM_MARKER_SIZE:-9.0}"
+export SEFANIM_ERROR_COLOR="${SEFANIM_ERROR_COLOR:-#d62728}"
+export SEFANIM_KEEP_FRAMES="${SEFANIM_KEEP_FRAMES:-0}"
+
+# Parallelism: number of render array tasks.
+export SEFANIM_NUM_SHARDS="${SEFANIM_NUM_SHARDS:-100}"
+
+# Per-stage resource requests (cores via --ntasks, RAM in MB, time in minutes).
+export SEFANIM_PRECOMPUTE_CORES="${SEFANIM_PRECOMPUTE_CORES:-1}"
+export SEFANIM_PRECOMPUTE_MEM_MB="${SEFANIM_PRECOMPUTE_MEM_MB:-2000}"
+export SEFANIM_PRECOMPUTE_TIME_MIN="${SEFANIM_PRECOMPUTE_TIME_MIN:-10}"
+
+# Rendering a shard reads a whole SEF year into memory, so give it more RAM than
+# the SQLite animation's per-day cache needed.
+export SEFANIM_RENDER_CORES="${SEFANIM_RENDER_CORES:-1}"
+export SEFANIM_RENDER_MEM_MB="${SEFANIM_RENDER_MEM_MB:-8000}"
+export SEFANIM_RENDER_TIME_MIN="${SEFANIM_RENDER_TIME_MIN:-30}"
+
+export SEFANIM_VALIDATE_CORES="${SEFANIM_VALIDATE_CORES:-1}"
+export SEFANIM_VALIDATE_MEM_MB="${SEFANIM_VALIDATE_MEM_MB:-2000}"
+export SEFANIM_VALIDATE_TIME_MIN="${SEFANIM_VALIDATE_TIME_MIN:-10}"
+
+export SEFANIM_ENCODE_CORES="${SEFANIM_ENCODE_CORES:-16}"
+export SEFANIM_ENCODE_MEM_MB="${SEFANIM_ENCODE_MEM_MB:-32000}"
+export SEFANIM_ENCODE_TIME_MIN="${SEFANIM_ENCODE_TIME_MIN:-240}"
+
 # --- Python runner -------------------------------------------------------
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
 
