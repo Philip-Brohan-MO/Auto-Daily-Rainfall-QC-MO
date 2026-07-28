@@ -53,6 +53,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -542,6 +543,21 @@ def export_sef(
         obs_rows = 0
         current_key: Optional[tuple] = None
         group_rows: List[Dict[str, object]] = []
+        cleared_years: set = set()
+
+        def _clear_year(year) -> None:
+            # Wipe a year's output directory the first time it appears in the
+            # (year-ordered) stream, before any file for it is written. This
+            # removes stale files left by a previous export -- e.g. duplicate
+            # transcriptions that are now merged away and would otherwise linger
+            # and be double-counted downstream. Year sharding is disjoint, so a
+            # run only ever clears years it owns.
+            if year is None or year in cleared_years:
+                return
+            year_dir = output_root / "tsv" / str(int(year))
+            if year_dir.exists():
+                shutil.rmtree(year_dir)
+            cleared_years.add(year)
 
         def _flush() -> None:
             nonlocal files_written, obs_rows
@@ -566,6 +582,7 @@ def export_sef(
         reader = conn.execute(query).fetch_record_batch(batch_rows)
         for batch in reader:
             for row in batch.to_pylist():
+                _clear_year(row["matched_year"])
                 key = (row["matched_year"], row["group_key"])
                 if key != current_key:
                     _flush()
