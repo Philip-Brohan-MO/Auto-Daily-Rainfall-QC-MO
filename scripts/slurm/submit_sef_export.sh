@@ -1,16 +1,18 @@
 #!/bin/bash
 # Submit the SEF export (share located, QC'd daily rainfall in Station Exchange
 # Format) as a single SLURM array stage:
-#   sef_export_array   (SEF_NUM_SHARDS array tasks, each a disjoint file_id slice)
+#   sef_export_array   (SEF_NUM_SHARDS array tasks, each a disjoint year slice)
 #
-# There is NO merge stage: each shard writes its own station-year .tsv files into
-# year-partitioned subfolders of SEF_OUTPUT_ROOT/tsv, so the shard outputs never
-# collide.
+# Duplicate exact-match transcriptions of a station-year are merged into one SEF
+# file, so the export is sharded by matched YEAR (keeping a station's duplicates
+# together). There is NO merge stage: each shard writes its own station-year .tsv
+# files into year-partitioned subfolders of SEF_OUTPUT_ROOT/tsv, so the shard
+# outputs never collide.
 #
 # Usage:
 #   scripts/slurm/submit_sef_export.sh
 #   SEF_NUM_SHARDS=200 scripts/slurm/submit_sef_export.sh
-#   SEF_TOTAL_FILE_IDS=680000 scripts/slurm/submit_sef_export.sh
+#   SEF_MIN_YEAR=1836 SEF_MAX_YEAR=1960 scripts/slurm/submit_sef_export.sh
 #
 # Prerequisites (both are inputs to the export join):
 #   1. The daily-consensus table (submit_daily_consensus.sh) -- the daily totals.
@@ -48,7 +50,8 @@ ARRAY_MAX=$(( SEF_NUM_SHARDS - 1 ))
 
 EXPORTS="ALL,RQC_SLURM_DIR=${SCRIPT_DIR}"
 EXPORTS="${EXPORTS},SEF_NUM_SHARDS=${SEF_NUM_SHARDS}"
-EXPORTS="${EXPORTS},SEF_TOTAL_FILE_IDS=${SEF_TOTAL_FILE_IDS}"
+EXPORTS="${EXPORTS},SEF_MIN_YEAR=${SEF_MIN_YEAR}"
+EXPORTS="${EXPORTS},SEF_MAX_YEAR=${SEF_MAX_YEAR}"
 EXPORTS="${EXPORTS},SEF_OUTPUT_ROOT=${SEF_OUTPUT_ROOT}"
 EXPORTS="${EXPORTS},SEF_SOURCE=${SEF_SOURCE}"
 EXPORTS="${EXPORTS},SEF_LINK=${SEF_LINK}"

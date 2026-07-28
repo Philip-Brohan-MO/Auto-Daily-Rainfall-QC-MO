@@ -35,7 +35,7 @@ export DUCKDB_TEMP_DIR="${TMPDIR:-/var/tmp}/duckdb_sef_${SLURM_JOB_ID:-$$}_${SLU
 mkdir -p "${DUCKDB_TEMP_DIR}"
 trap 'rm -rf "${DUCKDB_TEMP_DIR}"' EXIT
 
-echo "SEF export shard ${SLURM_ARRAY_TASK_ID}/${SEF_NUM_SHARDS}: file_ids partitioned from ${SEF_TOTAL_FILE_IDS}"
+echo "SEF export shard ${SLURM_ARRAY_TASK_ID}/${SEF_NUM_SHARDS}: years partitioned from ${SEF_MIN_YEAR}-${SEF_MAX_YEAR}"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
 run_py scripts/export_sef.py \
     --output-root "${SEF_OUTPUT_ROOT}" \
@@ -44,6 +44,7 @@ run_py scripts/export_sef.py \
     --obs-hour "${SEF_OBS_HOUR}" \
     --num-shards "${SEF_NUM_SHARDS}" \
     --shard-index "${SLURM_ARRAY_TASK_ID}" \
-    --total-file-ids "${SEF_TOTAL_FILE_IDS}"
+    --min-year "${SEF_MIN_YEAR}" \
+    --max-year "${SEF_MAX_YEAR}"
 
 echo "SEF export shard ${SLURM_ARRAY_TASK_ID} complete."

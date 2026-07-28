@@ -202,15 +202,19 @@ export SECONDARY_SCORE_MEM_MB="${SECONDARY_SCORE_MEM_MB:-16000}"
 export SECONDARY_SCORE_TIME_MIN="${SECONDARY_SCORE_TIME_MIN:-60}"
 
 # --- SEF export (share located, QC'd daily rainfall in Station Exchange Format)
-# Write one SEF .tsv per located station-year (per ensemble file_id), carrying
-# every day's consensus daily total (converted inches -> mm) plus its QC verdicts
-# (qc1 / qc2 in each observation's Meta). Sharded by CONTIGUOUS file_id range so
-# each array task streams a disjoint slice and writes its own year-partitioned
-# .tsv files -- no merge stage is needed. Refresh SEF_TOTAL_FILE_IDS with the max
-# ensemble file_id (same figure the regional-stats pipeline uses).
+# Write one SEF .tsv per REAL station-year, carrying every day's consensus daily
+# total (converted inches -> mm) plus its QC verdicts (qc1 / qc2 in each
+# observation's Meta). Duplicate exact-match transcriptions of the same
+# station-year are merged (QC-aware, best value per day) into a single file, so
+# the export is sharded by CONTIGUOUS matched-year range (keeping a station's
+# duplicates together) -- each array task streams a disjoint set of years and
+# writes its own year-partitioned .tsv files, so no merge stage is needed.
+# Refresh SEF_MIN_YEAR / SEF_MAX_YEAR with the min/max matched_year in
+# ensemble_metadata (safe defaults cover the Rainfall Rescue coverage span).
 export SEF_OUTPUT_ROOT="${SEF_OUTPUT_ROOT:-${PDIR}/sef_export}"
 export SEF_NUM_SHARDS="${SEF_NUM_SHARDS:-100}"
-export SEF_TOTAL_FILE_IDS="${SEF_TOTAL_FILE_IDS:-680000}"
+export SEF_MIN_YEAR="${SEF_MIN_YEAR:-1677}"
+export SEF_MAX_YEAR="${SEF_MAX_YEAR:-1980}"
 # SEF header provenance and the daily observation hour (UK rainfall day ends 09:00).
 export SEF_SOURCE="${SEF_SOURCE:-RainfallRescue}"
 export SEF_LINK="${SEF_LINK:-NA}"

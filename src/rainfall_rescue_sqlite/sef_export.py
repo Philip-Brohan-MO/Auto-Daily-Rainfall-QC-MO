@@ -14,14 +14,30 @@ consensus value together with its QC verdicts.
 
 Design (locked with the maintainer)
 -----------------------------------
-* **One SEF file per station-year** (per ensemble ``file_id``). Files land under
-  ``<output_root>/tsv/<matched_year>/<ID>.tsv`` so no single directory holds the
-  whole (~500k-file) dataset.
+* **One SEF file per real station-year.** The ensemble frequently contains
+  *duplicate* transcriptions of the same station-year (several ``file_id`` values
+  that all matched the same real station in the same year). These duplicates are
+  merged into a single SEF file: for every calendar day the value is taken from
+  the duplicate with the best QC verdict (see the QC ladder below), so no day is
+  ever dropped. **Only exact matches are merged** -- they carry a real location
+  name / latitude / longitude and are grouped by
+  ``(matched_location_name, matched_latitude, matched_longitude, matched_year)``.
+  Approximate matches (coordinates but no confirmed name) are never merged; each
+  is written as its own file, exactly as before. Files still land under
+  ``<output_root>/tsv/<matched_year>/<ID>.tsv``.
+* **QC-aware day selection.** When several duplicates cover the same day, the
+  value is chosen by this preference ladder (best first): ``qc1=pass`` >
+  ``qc1=fail & qc2=pass`` > ``qc1=review`` > ``qc1=fail & qc2=indeterminate`` >
+  everything else; ties are broken by the lowest ``file_id``. The merged file's
+  ID is the *representative* source (the duplicate contributing the most
+  ``qc1=pass`` days, tie-broken by lowest ``file_id``); the file-level ``Meta``
+  lists every merged source and each observation records the source it came from.
 * **All located observations** are exported (any station with coordinates, i.e.
   an exact or approximate match). The QC verdict travels in each observation's
-  per-observation ``Meta`` column as ``qc1=<pass|review|fail>`` and
+  per-observation ``Meta`` column as ``qc1=<pass|review|fail>``,
   ``qc2=<pass|fail|indeterminate|NA>`` (``qc2`` only exists for the QC1-fail days
-  re-examined by the secondary check).
+  re-examined by the secondary check) and ``source=<specifier>`` (which duplicate
+  supplied the value).
 * **Units**: the stored consensus is in inches; SEF ``Value`` is converted to
   millimetres (``× 25.4``) and the file-wide ``Meta`` records ``orig.units=in``.
 * **Every day** present in the transcription is emitted, including ``0.0`` (the
@@ -92,14 +108,14 @@ DATA_COLUMNS = ["Year", "Month", "Day", "Hour", "Minute", "Period", "Value", "Me
 
 @dataclass(frozen=True)
 class SEFExportResult:
-    """Summary of a SEF export run over a file_id slice."""
+    """Summary of a SEF export run over a matched-year slice."""
 
     output_root: Path
     qc_session_id: int
     files_written: int
     obs_rows: int
-    start_file_id: Optional[int]
-    end_file_id: Optional[int]
+    start_year: Optional[int]
+    end_year: Optional[int]
 
 
 # --------------------------------------------------------------------------- #
@@ -154,6 +170,11 @@ def _specifier(file_name: str) -> str:
     return file_name[:-5] if file_name.endswith(".json") else file_name
 
 
+def _station_id(file_name) -> str:
+    """The SEF-legal ID derived from an ensemble file name (its specifier)."""
+    return _sanitise_id(_specifier(str(file_name)))
+
+
 def _is_missing(value) -> bool:
     return value is None or (isinstance(value, float) and math.isnan(value))
 
@@ -172,6 +193,27 @@ def _fmt_flag(value) -> str:
     return text if text else "NA"
 
 
+def _qc_rank(qc1, qc2) -> int:
+    """Return the QC preference rank of a day (1 = best, 5 = worst).
+
+    The ladder, best first, is: ``qc1=pass`` (1) > ``qc1=fail & qc2=pass`` (2) >
+    ``qc1=review`` (3) > ``qc1=fail & qc2=indeterminate`` (4) > everything else
+    (5, e.g. failed both checks, or no QC verdict). It is used to pick which
+    duplicate transcription supplies each merged day's value.
+    """
+    q1 = "" if _is_missing(qc1) else str(qc1).strip().lower()
+    q2 = "" if _is_missing(qc2) else str(qc2).strip().lower()
+    if q1 == "pass":
+        return 1
+    if q1 == "fail" and q2 == "pass":
+        return 2
+    if q1 == "review":
+        return 3
+    if q1 == "fail" and q2 == "indeterminate":
+        return 4
+    return 5
+
+
 # --------------------------------------------------------------------------- #
 # Query construction
 # --------------------------------------------------------------------------- #
@@ -182,21 +224,27 @@ def _build_query(
     qc_root: Path,
     secondary_status_source: Optional[str],
     qc_session_id: int,
-    start_file_id: Optional[int],
-    end_file_id: Optional[int],
+    start_year: Optional[int],
+    end_year: Optional[int],
 ) -> str:
-    """Build the streamed join of consensus + located metadata + QC verdicts."""
+    """Build the streamed join of consensus + located metadata + QC verdicts.
+
+    The result is ordered by ``(matched_year, group_key, month, day_of_month,
+    file_id)`` so that every duplicate of a real station-year arrives as one
+    contiguous block ready to be merged. ``group_key`` collapses exact matches
+    that share a location and year; approximate matches key on their own
+    ``file_id`` so they are never merged.
+    """
     consensus_glob = _glob_sql(consensus_root / "daily_consensus")
     metadata_glob = _glob_sql(comparison_root / "ensemble_metadata")
     qc_status_glob = _glob_sql(qc_root / "daily_qc_status")
 
-    range_clauses = []
-    if start_file_id is not None:
-        range_clauses.append(f"file_id >= {int(start_file_id)}")
-    if end_file_id is not None:
-        range_clauses.append(f"file_id <= {int(end_file_id)}")
-    cons_where = ("WHERE " + " AND ".join(range_clauses)) if range_clauses else ""
-    meta_range = (" AND " + " AND ".join(range_clauses)) if range_clauses else ""
+    year_clauses = []
+    if start_year is not None:
+        year_clauses.append(f"matched_year >= {int(start_year)}")
+    if end_year is not None:
+        year_clauses.append(f"matched_year <= {int(end_year)}")
+    meta_year = (" AND " + " AND ".join(year_clauses)) if year_clauses else ""
 
     if secondary_status_source is not None:
         qc2_cte = f"""
@@ -204,6 +252,7 @@ def _build_query(
                 SELECT file_id, matched_year, month, day_of_month, secondary_flag
                 FROM read_parquet('{secondary_status_source}')
                 WHERE qc_session_id = {int(qc_session_id)}
+                  AND file_id IN (SELECT file_id FROM meta)
                 QUALIFY row_number() OVER (
                     PARTITION BY file_id, matched_year, month, day_of_month
                     ORDER BY train_session_id DESC
@@ -223,13 +272,19 @@ def _build_query(
         qc2_select = "CAST(NULL AS VARCHAR) AS qc2_flag"
         qc2_join = ""
 
+    # Exact matches that share a location and year are one real station-year and
+    # are merged; approximate matches key on their own file_id (never merged).
+    group_key_expr = (
+        "CASE WHEN m.match_type = 'exact' AND m.matched_location_name IS NOT NULL\n"
+        "     THEN 'loc:' || m.matched_location_name || '@'\n"
+        "          || CAST(round(m.matched_latitude, 4) AS VARCHAR) || ','\n"
+        "          || CAST(round(m.matched_longitude, 4) AS VARCHAR)\n"
+        "     ELSE 'file:' || CAST(m.file_id AS VARCHAR)\n"
+        "END AS group_key"
+    )
+
     return f"""
-        WITH cons AS (
-            SELECT file_id, month, day_of_month, consensus_value
-            FROM read_parquet('{consensus_glob}')
-            {cons_where}
-        ),
-        meta AS (
+        WITH meta AS (
             SELECT file_id, file_name, matched_location_name,
                    matched_latitude, matched_longitude, matched_elevation_ft,
                    matched_year, match_type
@@ -240,12 +295,18 @@ def _build_query(
                   SELECT MAX(match_source_session_id)
                   FROM read_parquet('{metadata_glob}')
               )
-              {meta_range}
+              {meta_year}
+        ),
+        cons AS (
+            SELECT file_id, month, day_of_month, consensus_value
+            FROM read_parquet('{consensus_glob}')
+            WHERE file_id IN (SELECT file_id FROM meta)
         ),
         qc1 AS (
             SELECT file_id, month, day_of_month, final_flag
             FROM read_parquet('{qc_status_glob}')
             WHERE qc_session_id = {int(qc_session_id)}
+              AND file_id IN (SELECT file_id FROM meta)
         ),
         {qc2_cte}
         joined AS (
@@ -253,6 +314,7 @@ def _build_query(
                 m.file_id, m.file_name, m.matched_location_name,
                 m.matched_latitude, m.matched_longitude, m.matched_elevation_ft,
                 m.matched_year, m.match_type,
+                {group_key_expr},
                 c.month, c.day_of_month, c.consensus_value,
                 q1.final_flag AS qc1_flag,
                 {qc2_select}
@@ -265,8 +327,65 @@ def _build_query(
             {qc2_join}
         )
         SELECT * FROM joined
-        ORDER BY file_id, month, day_of_month
+        ORDER BY matched_year, group_key, month, day_of_month, file_id
     """
+
+
+# --------------------------------------------------------------------------- #
+# Duplicate merging
+# --------------------------------------------------------------------------- #
+def _merge_group(group_rows: List[Dict[str, object]]):
+    """Merge the duplicate transcriptions of one real station-year.
+
+    ``group_rows`` are all the observation rows that share a ``group_key`` (and
+    year): for an exact match, every duplicate of that location-year; for an
+    approximate match, the single file. For each calendar day the value is taken
+    from the duplicate with the best QC verdict (``_qc_rank``), ties broken by the
+    lowest ``file_id``. Returns ``(station, observations)`` where ``station``
+    carries the representative source's metadata plus the list of every merged
+    source, and each observation records the ``source`` it was taken from.
+    """
+    by_day: Dict[tuple, tuple] = {}
+    pass_counts: Dict[int, int] = {}
+    first_row: Dict[int, Dict[str, object]] = {}
+
+    for row in group_rows:
+        fid = int(row["file_id"])
+        first_row.setdefault(fid, row)
+        pass_counts.setdefault(fid, 0)
+        q1 = row["qc1_flag"]
+        if not _is_missing(q1) and str(q1).strip().lower() == "pass":
+            pass_counts[fid] += 1
+        day = (int(row["month"]), int(row["day_of_month"]))
+        rank = (_qc_rank(row["qc1_flag"], row["qc2_flag"]), fid)
+        best = by_day.get(day)
+        if best is None or rank < best[0]:
+            by_day[day] = (rank, row)
+
+    # Representative source: most qc1=pass days, tie-broken by lowest file_id.
+    rep_fid = min(pass_counts, key=lambda f: (-pass_counts[f], f))
+    rep_row = first_row[rep_fid]
+    sources = sorted(_station_id(first_row[f]["file_name"]) for f in first_row)
+
+    observations: List[Dict[str, object]] = []
+    for day in sorted(by_day):
+        _, row = by_day[day]
+        obs = dict(row)
+        obs["source"] = _station_id(row["file_name"])
+        observations.append(obs)
+
+    station = {
+        "file_name": rep_row["file_name"],
+        "matched_location_name": rep_row["matched_location_name"],
+        "matched_latitude": rep_row["matched_latitude"],
+        "matched_longitude": rep_row["matched_longitude"],
+        "matched_elevation_ft": rep_row["matched_elevation_ft"],
+        "matched_year": rep_row["matched_year"],
+        "match_type": rep_row["match_type"],
+        "sources": sources,
+        "n_sources": len(sources),
+    }
+    return station, observations
 
 
 # --------------------------------------------------------------------------- #
@@ -284,12 +403,14 @@ def _header_lines(station: Dict[str, object], *, source: str, link: str) -> List
             "orig.units=in",
             f"match.type={match_type}",
             f"qc.session={int(station['qc_session_id'])}",
+            f"n.sources={int(station['n_sources'])}",
+            f"sources={','.join(station['sources'])}",
         ]
     )
 
     values = {
         "SEF": SEF_VERSION,
-        "ID": _sanitise_id(_specifier(str(station["file_name"]))),
+        "ID": _station_id(station["file_name"]),
         "Name": "NA" if _is_missing(location_name) else str(location_name),
         "Lat": _fmt_num(station["matched_latitude"], 4),
         "Lon": _fmt_num(station["matched_longitude"], 4),
@@ -311,6 +432,7 @@ def _obs_line(row: Dict[str, object], *, obs_hour: int, obs_minute: int) -> str:
         [
             f"qc1={_fmt_flag(row['qc1_flag'])}",
             f"qc2={_fmt_flag(row['qc2_flag'])}",
+            f"source={_fmt_flag(row.get('source'))}",
         ]
     )
     fields = [
@@ -338,7 +460,7 @@ def _write_sef_file(
 ) -> int:
     """Write one station-year's SEF ``.tsv`` and return the observation count."""
     year = int(station["matched_year"])
-    station_id = _sanitise_id(_specifier(str(station["file_name"])))
+    station_id = _station_id(station["file_name"])
     out_dir = output_root / "tsv" / str(year)
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{station_id}.tsv"
@@ -365,19 +487,21 @@ def export_sef(
     qc_root: Optional[Path] = None,
     secondary_qc_root: Optional[Path] = None,
     qc_session_id: Optional[int] = None,
-    start_file_id: Optional[int] = None,
-    end_file_id: Optional[int] = None,
+    start_year: Optional[int] = None,
+    end_year: Optional[int] = None,
     source: str = DEFAULT_SOURCE,
     link: str = DEFAULT_LINK,
     obs_hour: int = DEFAULT_OBS_HOUR,
     obs_minute: int = DEFAULT_OBS_MINUTE,
     batch_rows: int = 200_000,
 ) -> SEFExportResult:
-    """Write one SEF ``.tsv`` per located station-year for a file_id slice.
+    """Write one merged SEF ``.tsv`` per real station-year for a year slice.
 
-    Streams the consensus/metadata/QC join in ``file_id`` order and flushes a
-    file each time the ``file_id`` advances, so memory stays bounded regardless of
-    how many stations fall in the slice.
+    Streams the consensus/metadata/QC join ordered by ``(matched_year,
+    group_key)`` and flushes a file each time that key advances. All duplicate
+    transcriptions of a station-year therefore arrive together and are merged
+    QC-aware (see :func:`_merge_group`), so memory stays bounded to one
+    station-year at a time regardless of how many stations fall in the slice.
     """
     output_root = Path(output_root) if output_root is not None else default_sef_output_root()
     comparison_root = (
@@ -410,20 +534,23 @@ def export_sef(
             qc_root=qc_root,
             secondary_status_source=secondary_status_source,
             qc_session_id=qc_session_id,
-            start_file_id=start_file_id,
-            end_file_id=end_file_id,
+            start_year=start_year,
+            end_year=end_year,
         )
 
         files_written = 0
         obs_rows = 0
-        current_file_id: Optional[int] = None
-        station: Optional[Dict[str, object]] = None
-        observations: List[Dict[str, object]] = []
+        current_key: Optional[tuple] = None
+        group_rows: List[Dict[str, object]] = []
 
         def _flush() -> None:
             nonlocal files_written, obs_rows
-            if station is None or not observations:
+            if not group_rows:
                 return
+            station, observations = _merge_group(group_rows)
+            if not observations:
+                return
+            station["qc_session_id"] = qc_session_id
             written = _write_sef_file(
                 station,
                 observations,
@@ -439,22 +566,12 @@ def export_sef(
         reader = conn.execute(query).fetch_record_batch(batch_rows)
         for batch in reader:
             for row in batch.to_pylist():
-                file_id = int(row["file_id"])
-                if file_id != current_file_id:
+                key = (row["matched_year"], row["group_key"])
+                if key != current_key:
                     _flush()
-                    current_file_id = file_id
-                    station = {
-                        "file_name": row["file_name"],
-                        "matched_location_name": row["matched_location_name"],
-                        "matched_latitude": row["matched_latitude"],
-                        "matched_longitude": row["matched_longitude"],
-                        "matched_elevation_ft": row["matched_elevation_ft"],
-                        "matched_year": row["matched_year"],
-                        "match_type": row["match_type"],
-                        "qc_session_id": qc_session_id,
-                    }
-                    observations = []
-                observations.append(row)
+                    current_key = key
+                    group_rows = []
+                group_rows.append(row)
         _flush()
     finally:
         conn.close()
@@ -464,8 +581,8 @@ def export_sef(
         qc_session_id=qc_session_id,
         files_written=files_written,
         obs_rows=obs_rows,
-        start_file_id=start_file_id,
-        end_file_id=end_file_id,
+        start_year=start_year,
+        end_year=end_year,
     )
 
     return SEFExportResult(
@@ -473,8 +590,8 @@ def export_sef(
         qc_session_id=qc_session_id,
         files_written=files_written,
         obs_rows=obs_rows,
-        start_file_id=start_file_id,
-        end_file_id=end_file_id,
+        start_year=start_year,
+        end_year=end_year,
     )
 
 
@@ -484,14 +601,14 @@ def _write_manifest(
     qc_session_id: int,
     files_written: int,
     obs_rows: int,
-    start_file_id: Optional[int],
-    end_file_id: Optional[int],
+    start_year: Optional[int],
+    end_year: Optional[int],
 ) -> None:
     """Record a small per-run manifest of the counts for this slice."""
     manifest_dir = output_root / "manifests"
     manifest_dir.mkdir(parents=True, exist_ok=True)
-    lo = "min" if start_file_id is None else str(int(start_file_id))
-    hi = "max" if end_file_id is None else str(int(end_file_id))
+    lo = "min" if start_year is None else str(int(start_year))
+    hi = "max" if end_year is None else str(int(end_year))
     manifest_path = manifest_dir / f"manifest_{lo}_{hi}.json"
     manifest_path.write_text(
         json.dumps(
@@ -499,8 +616,8 @@ def _write_manifest(
                 "qc_session_id": qc_session_id,
                 "files_written": files_written,
                 "obs_rows": obs_rows,
-                "start_file_id": start_file_id,
-                "end_file_id": end_file_id,
+                "start_year": start_year,
+                "end_year": end_year,
                 "created_at": _utc_now(),
                 "sef_version": SEF_VERSION,
                 "vbl": VBL,

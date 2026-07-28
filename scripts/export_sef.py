@@ -1,11 +1,12 @@
 """Export located, quality-controlled daily rainfall to Station Exchange Format.
 
-Runs one SEF export slice. The file_id slice can be given directly
-(``--start-file-id`` / ``--end-file-id``) or derived from a SLURM-array-style
-partition (``--num-shards`` / ``--shard-index`` / ``--total-file-ids``), mirroring
-the regional-stats and secondary-QC shard runners. Each shard writes disjoint
-station-year ``.tsv`` files into ``<output_root>/tsv/<year>/`` so no merge stage
-is needed.
+Runs one SEF export slice. The slice is a range of matched *years*, given either
+directly (``--start-year`` / ``--end-year``) or derived from a SLURM-array-style
+partition (``--num-shards`` / ``--shard-index`` / ``--min-year`` / ``--max-year``).
+Sharding by year (rather than by ``file_id``) keeps every duplicate transcription
+of a station-year in the same shard, so they can be merged into a single SEF file.
+Each shard writes disjoint ``<output_root>/tsv/<year>/`` directories, so no merge
+stage is needed.
 """
 
 from __future__ import annotations
@@ -43,9 +44,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch-rows", type=int, default=200_000)
 
     # Slice selection: either an explicit range ...
-    parser.add_argument("--start-file-id", type=int, default=None)
-    parser.add_argument("--end-file-id", type=int, default=None)
-    # ... or a SLURM-array-style partition.
+    parser.add_argument("--start-year", type=int, default=None)
+    parser.add_argument("--end-year", type=int, default=None)
+    # ... or a SLURM-array-style partition over a min/max year range.
     parser.add_argument("--num-shards", type=int, default=None)
     parser.add_argument(
         "--shard-index",
@@ -54,10 +55,16 @@ def parse_args() -> argparse.Namespace:
         help="Shard index; defaults to $SLURM_ARRAY_TASK_ID",
     )
     parser.add_argument(
-        "--total-file-ids",
+        "--min-year",
         type=int,
         default=None,
-        help="Total number of file_ids (used to compute the shard's start/end slice)",
+        help="Earliest matched year in the dataset (start of the partition range)",
+    )
+    parser.add_argument(
+        "--max-year",
+        type=int,
+        default=None,
+        help="Latest matched year in the dataset (end of the partition range)",
     )
     return parser.parse_args()
 
@@ -75,23 +82,33 @@ def _resolve_shard_index(explicit: int | None) -> int:
 
 def _resolve_slice(args: argparse.Namespace) -> tuple[int | None, int | None]:
     if args.num_shards is not None:
-        if args.total_file_ids is None:
-            raise SystemExit("--num-shards requires --total-file-ids")
+        if args.min_year is None or args.max_year is None:
+            raise SystemExit("--num-shards requires --min-year and --max-year")
+        if args.max_year < args.min_year:
+            raise SystemExit("--max-year must be >= --min-year")
         shard_index = _resolve_shard_index(args.shard_index)
-        ids_per_shard = (args.total_file_ids + args.num_shards - 1) // args.num_shards
-        start_file_id = shard_index * ids_per_shard + 1
-        end_file_id = min(start_file_id + ids_per_shard - 1, args.total_file_ids)
+        total_years = args.max_year - args.min_year + 1
+        years_per_shard = (total_years + args.num_shards - 1) // args.num_shards
+        start_year = args.min_year + shard_index * years_per_shard
+        end_year = min(start_year + years_per_shard - 1, args.max_year)
+        if start_year > args.max_year:
+            print(
+                f"SEF export shard {shard_index}/{args.num_shards}: "
+                f"no years in range (empty shard)"
+            )
+            # Signal an empty slice by an impossible range so nothing is written.
+            return args.max_year + 1, args.max_year
         print(
             f"SEF export shard {shard_index}/{args.num_shards}: "
-            f"file_ids {start_file_id}-{end_file_id}"
+            f"years {start_year}-{end_year}"
         )
-        return start_file_id, end_file_id
-    return args.start_file_id, args.end_file_id
+        return start_year, end_year
+    return args.start_year, args.end_year
 
 
 def main() -> None:
     args = parse_args()
-    start_file_id, end_file_id = _resolve_slice(args)
+    start_year, end_year = _resolve_slice(args)
 
     result = export_sef(
         output_root=args.output_root,
@@ -100,8 +117,8 @@ def main() -> None:
         qc_root=args.qc_root,
         secondary_qc_root=args.secondary_qc_root,
         qc_session_id=args.qc_session_id,
-        start_file_id=start_file_id,
-        end_file_id=end_file_id,
+        start_year=start_year,
+        end_year=end_year,
         source=args.source,
         link=args.link,
         obs_hour=args.obs_hour,
