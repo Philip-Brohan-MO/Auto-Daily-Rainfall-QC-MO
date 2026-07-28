@@ -268,6 +268,23 @@ export SEFANIM_ENCODE_CORES="${SEFANIM_ENCODE_CORES:-16}"
 export SEFANIM_ENCODE_MEM_MB="${SEFANIM_ENCODE_MEM_MB:-32000}"
 export SEFANIM_ENCODE_TIME_MIN="${SEFANIM_ENCODE_TIME_MIN:-240}"
 
+# --- SEF analysis dataset (summary figures from the SEF output only) ------
+# Convert the exported SEF .tsv tree into a compact Parquet analysis set that the
+# analyse_sef_output.ipynb notebook queries with DuckDB. Sharded ONE YEAR PER
+# ARRAY TASK: each task parses <SEFSTATS_SEF_ROOT>/tsv/<year>/ and writes disjoint
+# observations/year=<Y>.parquet + daily_national/year=<Y>.parquet, so there is NO
+# merge stage. The array size is set at submit time from the number of SEF years
+# (submit_sef_analysis.sh counts them). Reads the SEF export, so build it first
+# with submit_sef_export.sh.
+export SEFSTATS_ROOT="${SEFSTATS_ROOT:-${PDIR}/sef_analysis}"
+export SEFSTATS_SEF_ROOT="${SEFSTATS_SEF_ROOT:-${SEF_OUTPUT_ROOT}}"
+
+# Per-task resources. A task holds one year of observations in memory before
+# writing; the busiest year (~9k station files) is the sizing case.
+export SEFSTATS_CORES="${SEFSTATS_CORES:-1}"
+export SEFSTATS_MEM_MB="${SEFSTATS_MEM_MB:-8000}"
+export SEFSTATS_TIME_MIN="${SEFSTATS_TIME_MIN:-30}"
+
 # --- Python runner -------------------------------------------------------
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"
 

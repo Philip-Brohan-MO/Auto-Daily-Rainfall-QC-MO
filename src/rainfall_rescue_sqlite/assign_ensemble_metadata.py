@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import sqlite3
 from dataclasses import dataclass
@@ -14,6 +15,28 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .ingest import default_db_path
+
+# An exact match additionally requires that the ensemble (transcription)
+# consensus vector is not mostly empty: no more than this many of its 12
+# monthly values may be exactly 0. This rejects spurious exact matches where a
+# no-data transcription agrees with a reference station purely on zero months.
+MAX_EXACT_ZERO_MONTHS = 3
+
+
+def _count_zero_months(raw_vector_json: Optional[str]) -> int:
+    """Return the number of monthly values that are exactly 0 in a raw vector.
+
+    ``raw_vector_json`` is the JSON-encoded list of 12 monthly consensus values
+    stored on ``ensemble_consensus_vectors``. A missing/unparseable vector is
+    treated as fully empty (12 zeros) so it fails the exact-match zero test.
+    """
+    if not raw_vector_json:
+        return 12
+    try:
+        values = json.loads(raw_vector_json)
+    except (ValueError, TypeError):
+        return 12
+    return sum(1 for v in values if v == 0.0)
 
 
 @dataclass(frozen=True)
@@ -133,7 +156,9 @@ def assign_ensemble_metadata(
     """Assign RR metadata to ensemble files using similarity matches.
     
     Two-phase matching:
-    1. Exact match: rank-1 with exact_agreement_count >= 9 → copy all metadata
+    1. Exact match: rank-1 with exact_agreement_count >= 9 and no more than
+       MAX_EXACT_ZERO_MONTHS (3) zero monthly values in the ensemble
+       (transcription) consensus vector → copy all metadata
     2. Approximate match: top-3 ranks by cosine score
        - Year consensus: all 3 must have same year
        - Spatial proximity: all 3 within Euclidean distance 1.0 degree → assign centroid
@@ -196,9 +221,11 @@ def assign_ensemble_metadata(
                 rank1_row = cmp_conn.execute(
                     """
                     SELECT m.exact_agreement_count, m.rr_vector_id,
-                           r.location_name, r.year, r.latitude, r.longitude, st.elevation_ft
+                           r.location_name, r.year, r.latitude, r.longitude, st.elevation_ft,
+                           e.raw_vector_json
                     FROM similarity_matches m
                     JOIN rr_monthly_vectors r ON r.rr_vector_id = m.rr_vector_id
+                    JOIN ensemble_consensus_vectors e ON e.ensemble_vector_id = m.ensemble_vector_id
                     LEFT JOIN rr.stations st ON st.station_file_id = r.station_file_id
                     WHERE m.ensemble_vector_id = ?
                       AND m.session_id = ?
@@ -214,7 +241,10 @@ def assign_ensemble_metadata(
 
                 exact_agreement = int(rank1_row[0])
 
-                if exact_agreement >= 9:
+                if (
+                    exact_agreement >= 9
+                    and _count_zero_months(rank1_row[7]) <= MAX_EXACT_ZERO_MONTHS
+                ):
                     # Exact match: copy all metadata from rank-1
                     location_name = rank1_row[2]
                     year = int(rank1_row[3]) if rank1_row[3] is not None else None
@@ -344,8 +374,12 @@ def assign_ensemble_metadata_parquet(
 
     Matching rules are identical to the SQLite version:
 
-    1. Exact match: rank-1 with ``exact_agreement_count >= 9`` copies all
-       metadata (location, year, lat/lon, elevation) from the rank-1 station.
+    1. Exact match: rank-1 with ``exact_agreement_count >= 9`` *and* whose
+       ensemble (transcription) consensus vector has no more than
+       ``MAX_EXACT_ZERO_MONTHS`` (3) monthly values exactly equal to 0 copies
+       all metadata (location, year, lat/lon, elevation) from the rank-1
+       station. The zero-month guard rejects spurious matches from no-data
+       transcriptions that agree with a reference station only on empty months.
     2. Approximate match: requires the top-3 ranks to be present, agree on year,
        and lie within 1.0 degree of each other; assigns the consensus year and
        centroid position (location name and elevation left NULL).
@@ -397,10 +431,13 @@ def assign_ensemble_metadata_parquet(
             CAST(r.year AS BIGINT) AS year,
             CAST(r.latitude AS DOUBLE) AS latitude,
             CAST(r.longitude AS DOUBLE) AS longitude,
-            CAST(st.elevation_ft AS DOUBLE) AS elevation_ft
+            CAST(st.elevation_ft AS DOUBLE) AS elevation_ft,
+            CAST(e.raw_vector_json AS VARCHAR) AS raw_vector_json
         FROM read_parquet('{_parquet_glob(comparison_root / 'similarity_matches')}') m
         JOIN read_parquet('{_parquet_glob(comparison_root / 'rr_monthly_vectors')}') r
           ON r.rr_vector_id = m.rr_vector_id
+        JOIN read_parquet('{_parquet_glob(comparison_root / 'ensemble_consensus_vectors')}') e
+          ON e.ensemble_vector_id = m.ensemble_vector_id
         LEFT JOIN read_parquet('{_parquet_glob(rr_dataset_root / 'stations')}') st
           ON st.station_file_id = r.station_file_id
         WHERE m.session_id = {session_id}
@@ -419,7 +456,10 @@ def assign_ensemble_metadata_parquet(
             return
         file_id = int(vid.split("::", 1)[1])
 
-        if int(rank1["exact_agreement_count"]) >= 9:
+        if (
+            int(rank1["exact_agreement_count"]) >= 9
+            and _count_zero_months(rank1["raw_vector_json"]) <= MAX_EXACT_ZERO_MONTHS
+        ):
             assignments[file_id] = {
                 "matched_location_name": rank1["location_name"],
                 "matched_year": None if rank1["year"] is None else int(rank1["year"]),
@@ -463,6 +503,7 @@ def assign_ensemble_metadata_parquet(
         lat = d["latitude"]
         lon = d["longitude"]
         elev = d["elevation_ft"]
+        raw = d["raw_vector_json"]
         for i in range(batch.num_rows):
             vid = vids[i]
             if vid != cur_vid:
@@ -477,6 +518,7 @@ def assign_ensemble_metadata_parquet(
                 "latitude": lat[i],
                 "longitude": lon[i],
                 "elevation_ft": elev[i],
+                "raw_vector_json": raw[i],
             }
     if cur_vid is not None:
         _decide(cur_vid, cur_ranks)

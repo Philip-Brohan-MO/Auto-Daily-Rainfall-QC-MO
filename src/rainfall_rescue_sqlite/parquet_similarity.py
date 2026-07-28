@@ -1142,6 +1142,20 @@ def merge_similarity_shards_parquet(
             FROM read_parquet('{out_matches_path}')
             """
         ).fetchone()
+
+        # Each shard matched every ensemble query against the full set of RR
+        # candidate vectors, so the candidate count is simply the number of
+        # rr_monthly_vectors rows in comparison_root. The merge itself never
+        # loads these vectors, so count them here to populate the session.
+        rr_vectors_glob = str(comparison_root / "rr_monthly_vectors" / "*.parquet")
+        if sorted((comparison_root / "rr_monthly_vectors").glob("*.parquet")):
+            rr_candidates = int(
+                conn.execute(
+                    f"SELECT COUNT(*) FROM read_parquet('{rr_vectors_glob}')"
+                ).fetchone()[0]
+            )
+        else:
+            rr_candidates = None
     finally:
         conn.close()
 
@@ -1161,7 +1175,7 @@ def merge_similarity_shards_parquet(
                 "uncertainty_weight": uncertainty_weight,
                 "ranking_method": RANKING_METHOD_EXACT_ANY_MEMBER,
                 "ensemble_queries": n_queries,
-                "rr_candidates": None,
+                "rr_candidates": rr_candidates,
                 "matches_written": matches_written,
                 "status": "success",
                 "message": None,
@@ -1185,6 +1199,7 @@ def merge_similarity_shards_parquet(
             "uncertainty_weight": uncertainty_weight,
             "ranking_method": RANKING_METHOD_EXACT_ANY_MEMBER,
             "ensemble_queries": n_queries,
+            "rr_candidates": rr_candidates,
             "matches_written": matches_written,
             "shards_merged": len(shard_paths),
             "status": "success",
