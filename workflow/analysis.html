@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Analysis &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinxdoc.css?v=34905f61" />
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="SLURM and HPC" href="../reference/slurm.html" />
+    <link rel="prev" title="Export" href="export.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../reference/slurm.html" title="SLURM and HPC"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="export.html" title="Export"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Analysis</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="analysis">
+<h1>Analysis<a class="headerlink" href="#analysis" title="Link to this heading">¶</a></h1>
+<p>The final stage checks that the shared dataset is <strong>useful</strong> and free of hidden
+bugs, and brings the rescued rainfall to life as animated maps. Everything here
+is computed from the deliverable itself — the exported SEF files — not from the
+working databases.</p>
+<p>Three notebooks:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/analyse_sef_output.ipynb">analyse_sef_output.ipynb</a></p></li>
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/generate_rainfall_animation.ipynb">generate_rainfall_animation.ipynb</a></p></li>
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/generate_sef_animation.ipynb">generate_sef_animation.ipynb</a></p></li>
+</ul>
+<section id="summarising-the-shared-data">
+<h2>Summarising the shared data<a class="headerlink" href="#summarising-the-shared-data" title="Link to this heading">¶</a></h2>
+<p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/analyse_sef_output.ipynb">analyse_sef_output</a>
+produces a series of summary figures — coverage, QC pass rates, rainfall trends
+and intensity, the wettest days, extreme-rainfall frequency, and a cross-check
+against known historical floods and droughts. The goal is twofold: show the data
+is useful, and surface bugs (a bad transcription batch, a units slip, a QC edge
+case) before shipping.</p>
+<p>Reading the raw <code class="docutils literal notranslate"><span class="pre">.tsv</span></code> tree for every figure would be slow, so the SEF files are
+first parsed <strong>once</strong> into a compact Parquet analysis dataset (<code class="docutils literal notranslate"><span class="pre">observations</span></code>
+plus precomputed <code class="docutils literal notranslate"><span class="pre">daily_national</span></code> aggregates) that the notebook then queries
+cheaply with DuckDB. Build that dataset in parallel on the cluster — one array
+task per SEF year, no merge stage — with:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_sef_analysis.sh
+</pre></div>
+</div>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>The station network grows enormously over the record, from a handful of gauges
+to thousands. The national series are simple means over the reporting stations,
+so absolute levels are coverage-influenced; coverage-sensitive metrics are shown
+as rates per reporting station. Treat between-era comparisons with care.</p>
+</div>
+</section>
+<section id="animating-the-rainfall-field">
+<h2>Animating the rainfall field<a class="headerlink" href="#animating-the-rainfall-field" title="Link to this heading">¶</a></h2>
+<p>Two notebooks turn the daily rainfall into a smoothed animated map of the UK,
+interpolating several frames between each day so the field appears to evolve
+continuously. Rendering a full run is thousands of frames, so the work is done on
+the cluster and only the finished MP4 is brought back for display.</p>
+<p>Both use the same four-stage SLURM pipeline, chained with <code class="docutils literal notranslate"><span class="pre">--dependency=afterok</span></code>:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Stage</p></th>
+<th class="head"><p>SLURM</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>precompute</p></td>
+<td><p>1 job</p></td>
+<td><p>write <code class="docutils literal notranslate"><span class="pre">manifest.json</span></code> describing every frame and the shard boundaries</p></td>
+</tr>
+<tr class="row-odd"><td><p>render</p></td>
+<td><p>array <code class="docutils literal notranslate"><span class="pre">0–(N-1)</span></code></p></td>
+<td><p>render each shard’s contiguous block of frames in parallel</p></td>
+</tr>
+<tr class="row-even"><td><p>validate</p></td>
+<td><p>1 job</p></td>
+<td><p>confirm every expected frame exists</p></td>
+</tr>
+<tr class="row-odd"><td><p>encode</p></td>
+<td><p>1 job</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ffmpeg</span></code> the frame sequence into an H.264 MP4</p></td>
+</tr>
+</tbody>
+</table>
+<p>Every frame has a global index fixed by the date range and the frames-per-day
+setting, so shards never collide and any failed shard can be re-run on its own.</p>
+<section id="consensus-animation">
+<h3>Consensus animation<a class="headerlink" href="#consensus-animation" title="Link to this heading">¶</a></h3>
+<p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/generate_rainfall_animation.ipynb">generate_rainfall_animation</a>
+animates the <strong>consensus</strong> daily rainfall (median over the five members, values
+in <strong>inches</strong>), styled like the static maps. Start with a single test year, then
+raise the shard count for the full record:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_animation.sh
+</pre></div>
+</div>
+</section>
+<section id="shared-sef-animation">
+<h3>Shared (SEF) animation<a class="headerlink" href="#shared-sef-animation" title="Link to this heading">¶</a></h3>
+<p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/generate_sef_animation.ipynb">generate_sef_animation</a>
+animates the data <strong>exactly as it is shared</strong> — reading only the SEF <code class="docutils literal notranslate"><span class="pre">.tsv</span></code> files.
+It is the counterpart to the consensus animation, with two differences: values
+are in <strong>millimetres</strong>, and <strong>QC is made visible</strong> — a station that passed either
+check is drawn with its value, while one that failed both is drawn as a red error
+cross and excluded from the field.</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_sef_animation.sh
+</pre></div>
+</div>
+<figure class="align-default" id="id1">
+<a class="reference internal image-reference" href="../_images/sef_animation_frame.png"><img alt="A single frame from the shared SEF rainfall animation" src="../_images/sef_animation_frame.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">A single frame from the shared (SEF) rainfall animation. Values are in
+millimetres, and stations that failed both QC checks are marked with a red cross
+rather than a rainfall value.</span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p>This is the end of the workflow. To reproduce or extend any part of it, see
+<a class="reference internal" href="../reproduce.html"><span class="std std-doc">How to reproduce and extend</span></a>.</p>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="../index.html">
+              <img class="logo" src="../_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="../index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="export.html">Export</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../reference/slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/workflow/analysis.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../reference/slurm.html" title="SLURM and HPC"
+             >next</a></li>
+        <li class="right" >
+          <a href="export.html" title="Export"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Analysis</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

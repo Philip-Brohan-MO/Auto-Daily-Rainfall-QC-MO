@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Scripts and SLURM jobs &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinxdoc.css?v=34905f61" />
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="How to reproduce and extend" href="../reproduce.html" />
+    <link rel="prev" title="Architecture" href="architecture.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../reproduce.html" title="How to reproduce and extend"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="architecture.html" title="Architecture"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Scripts and SLURM jobs</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="scripts-and-slurm-jobs">
+<h1>Scripts and SLURM jobs<a class="headerlink" href="#scripts-and-slurm-jobs" title="Link to this heading">¶</a></h1>
+<p>The <code class="docutils literal notranslate"><span class="pre">scripts/</span></code> directory holds the command-line entry points that the notebooks
+call and the SLURM jobs run. This page is an inventory; for how they fit together
+see the <a class="reference internal" href="../workflow/overview.html"><span class="std std-doc">workflow overview</span></a> and the
+<a class="reference internal" href="slurm.html"><span class="std std-doc">SLURM reference</span></a>.</p>
+<section id="processing-scripts-scripts">
+<h2>Processing scripts (<code class="docutils literal notranslate"><span class="pre">scripts/</span></code>)<a class="headerlink" href="#processing-scripts-scripts" title="Link to this heading">¶</a></h2>
+<p>These are plain Python entry points, each a thin wrapper around a module in
+<code class="docutils literal notranslate"><span class="pre">src/rainfall_rescue_sqlite/</span></code>. A single SLURM array task typically runs one of
+these for its shard.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Script</p></th>
+<th class="head"><p>Stage</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">build_rainfall_rescue_parquet.py</span></code></p></td>
+<td><p>Ingestion</p></td>
+<td><p>Rainfall Rescue CSV → Parquet</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">build_ensemble_transcriptions_parquet.py</span></code></p></td>
+<td><p>Ingestion</p></td>
+<td><p>Ensemble JSON → Parquet</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">run_ensemble_ingest_shard.py</span></code> / <code class="docutils literal notranslate"><span class="pre">merge_ensemble_shards.py</span></code></p></td>
+<td><p>Ingestion</p></td>
+<td><p>Sharded ensemble ingest and merge</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">build_similarity_vectors.py</span></code></p></td>
+<td><p>Matching</p></td>
+<td><p>Build the normalised comparison vectors</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">run_similarity_shard.py</span></code> / <code class="docutils literal notranslate"><span class="pre">merge_similarity_shards.py</span></code></p></td>
+<td><p>Matching</p></td>
+<td><p>Sharded matching and merge</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">run_monthly_similarity_baseline.py</span></code></p></td>
+<td><p>Matching</p></td>
+<td><p>Baseline similarity scoring</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">assign_ensemble_metadata.py</span></code></p></td>
+<td><p>Matching</p></td>
+<td><p>Copy RR metadata onto matched records</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">run_qc_check_exact_monthly.py</span></code> / <code class="docutils literal notranslate"><span class="pre">run_qc_shard.py</span></code> / <code class="docutils literal notranslate"><span class="pre">merge_qc_shards.py</span></code></p></td>
+<td><p>QC1</p></td>
+<td><p>Monthly-total check, sharded, and merge</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">run_daily_consensus_shard.py</span></code> / <code class="docutils literal notranslate"><span class="pre">merge_daily_consensus_shards.py</span></code></p></td>
+<td><p>QC2</p></td>
+<td><p>Build the daily-consensus table</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">run_regional_stats_shard.py</span></code> / <code class="docutils literal notranslate"><span class="pre">merge_regional_stats_shards.py</span></code></p></td>
+<td><p>QC2</p></td>
+<td><p>Regional neighbour statistics</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">train_secondary_qc_models.py</span></code> / <code class="docutils literal notranslate"><span class="pre">score_secondary_qc.py</span></code></p></td>
+<td><p>QC2</p></td>
+<td><p>Train and score the secondary ML check</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">export_sef.py</span></code></p></td>
+<td><p>Export</p></td>
+<td><p>Merge duplicates → SEF <code class="docutils literal notranslate"><span class="pre">.tsv</span></code></p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">build_sef_analysis_parquet.py</span></code></p></td>
+<td><p>Analysis</p></td>
+<td><p>Parse SEF → analysis Parquet</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">render_animation_manifest.py</span></code> / <code class="docutils literal notranslate"><span class="pre">render_animation_shard.py</span></code> / <code class="docutils literal notranslate"><span class="pre">render_animation_validate.py</span></code> / <code class="docutils literal notranslate"><span class="pre">render_animation_encode.py</span></code></p></td>
+<td><p>Analysis</p></td>
+<td><p>Consensus-rainfall animation stages</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">render_sef_animation_manifest.py</span></code> / <code class="docutils literal notranslate"><span class="pre">render_sef_animation_shard.py</span></code></p></td>
+<td><p>Analysis</p></td>
+<td><p>SEF-rainfall animation stages</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="slurm-jobs-scripts-slurm">
+<h2>SLURM jobs (<code class="docutils literal notranslate"><span class="pre">scripts/slurm/</span></code>)<a class="headerlink" href="#slurm-jobs-scripts-slurm" title="Link to this heading">¶</a></h2>
+<p>Each pipeline has a <code class="docutils literal notranslate"><span class="pre">submit_*.sh</span></code> driver that sources <code class="docutils literal notranslate"><span class="pre">config.sh</span></code> and submits the
+<code class="docutils literal notranslate"><span class="pre">.sbatch</span></code> files below with the right dependencies.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Driver</p></th>
+<th class="head"><p><code class="docutils literal notranslate"><span class="pre">.sbatch</span></code> files</p></th>
+<th class="head"><p>Shape</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">submit_ensemble_ingest.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ingest_ensemble_array</span></code>, <code class="docutils literal notranslate"><span class="pre">merge_ensemble_shards</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">submit_all.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">build_vectors</span></code>, <code class="docutils literal notranslate"><span class="pre">match_array</span></code>, <code class="docutils literal notranslate"><span class="pre">merge_shards</span></code></p></td>
+<td><p>build + array + merge</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">submit_qc.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">qc_array</span></code>, <code class="docutils literal notranslate"><span class="pre">qc_merge</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">submit_daily_consensus.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">daily_consensus_array</span></code>, <code class="docutils literal notranslate"><span class="pre">daily_consensus_merge</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">submit_regional_stats.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">regional_stats_array</span></code>, <code class="docutils literal notranslate"><span class="pre">regional_stats_merge</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">submit_secondary_qc.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">secondary_qc_train</span></code>, <code class="docutils literal notranslate"><span class="pre">secondary_qc_score</span></code></p></td>
+<td><p>train + score</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">submit_sef_export.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sef_export_array</span></code></p></td>
+<td><p>array</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">submit_sef_analysis.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sef_analysis_array</span></code></p></td>
+<td><p>array</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">submit_animation.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">render_precompute</span></code>, <code class="docutils literal notranslate"><span class="pre">render_array</span></code>, <code class="docutils literal notranslate"><span class="pre">render_validate</span></code>, <code class="docutils literal notranslate"><span class="pre">render_encode</span></code></p></td>
+<td><p>4-stage</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">submit_sef_animation.sh</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">sef_render_precompute</span></code>, <code class="docutils literal notranslate"><span class="pre">sef_render_array</span></code>, <code class="docutils literal notranslate"><span class="pre">sef_render_validate</span></code>, <code class="docutils literal notranslate"><span class="pre">sef_render_encode</span></code></p></td>
+<td><p>4-stage</p></td>
+</tr>
+</tbody>
+</table>
+<p><code class="docutils literal notranslate"><span class="pre">config.sh</span></code> is the single source of truth for paths, shard counts, parameters and
+resources; see the <a class="reference internal" href="slurm.html"><span class="std std-doc">SLURM reference</span></a>.</p>
+</section>
+<section id="diagnostic-scripts-scripts-diagnostics">
+<h2>Diagnostic scripts (<code class="docutils literal notranslate"><span class="pre">scripts/diagnostics/</span></code>)<a class="headerlink" href="#diagnostic-scripts-scripts-diagnostics" title="Link to this heading">¶</a></h2>
+<p>These build the maps and figures the notebooks embed. Most have a <code class="docutils literal notranslate"><span class="pre">build_figure</span></code>
+function the notebooks import, and a <code class="docutils literal notranslate"><span class="pre">__main__</span></code> block so they can be run from the
+command line to write a standalone image or self-contained interactive HTML.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Script</p></th>
+<th class="head"><p>Produces</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">plot_image_consensus_metadata.py</span></code></p></td>
+<td><p>One-page per-transcription diagnostic (image, consensus table, monthly comparison, map)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">plot_daily_rainfall_map.py</span></code></p></td>
+<td><p>Static UK map of consensus rainfall for a date</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">plot_daily_rainfall_interactive.py</span></code></p></td>
+<td><p>Interactive (Plotly) version of the daily map</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">plot_daily_qc_interactive.py</span></code></p></td>
+<td><p>Interactive map coloured by QC1 flag</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">plot_regional_stat_interactive.py</span></code></p></td>
+<td><p>Interactive map of any regional statistic</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">plot_secondary_qc_interactive.py</span></code></p></td>
+<td><p>Interactive map coloured by the secondary-QC flag</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">plot_rr_match_counts_interactive.py</span></code></p></td>
+<td><p>Matching-health map: exact matches per RR station</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">plot_rank1_exact_agreement_distribution.py</span></code></p></td>
+<td><p>Distribution of rank-1 exact-agreement counts</p></td>
+</tr>
+</tbody>
+</table>
+<p>For example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>python<span class="w"> </span>scripts/diagnostics/plot_daily_rainfall_map.py<span class="w"> </span><span class="m">1931</span>-10-15<span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>--output<span class="w"> </span>daily_map.webp
+</pre></div>
+</div>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="../index.html">
+              <img class="logo" src="../_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="../index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/reference/scripts.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="../reproduce.html" title="How to reproduce and extend"
+             >next</a></li>
+        <li class="right" >
+          <a href="architecture.html" title="Architecture"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Scripts and SLURM jobs</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

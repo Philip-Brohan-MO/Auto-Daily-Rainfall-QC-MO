@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Architecture &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinxdoc.css?v=34905f61" />
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Scripts and SLURM jobs" href="scripts.html" />
+    <link rel="prev" title="SLURM and HPC" href="slurm.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="scripts.html" title="Scripts and SLURM jobs"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="slurm.html" title="SLURM and HPC"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Architecture</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="architecture">
+<h1>Architecture<a class="headerlink" href="#architecture" title="Link to this heading">¶</a></h1>
+<section id="the-data-backend">
+<h2>The data backend<a class="headerlink" href="#the-data-backend" title="Link to this heading">¶</a></h2>
+<p>The pipeline is built on <strong><a class="reference external" href="https://parquet.apache.org/">Parquet</a> datasets
+queried with <a class="reference external" href="https://duckdb.org/">DuckDB</a></strong>. Columnar Parquet files with
+row-group pruning let each SLURM shard read only the slice it needs and keep its
+memory bounded, which is what makes the array + merge pattern work over datasets
+far too large to hold in RAM. (An earlier iteration used SQLite; the <code class="docutils literal notranslate"><span class="pre">parquet_*</span></code>
+modules are the current backend.)</p>
+<p>All datasets live under <code class="docutils literal notranslate"><span class="pre">$PDIR</span></code> (see the <a class="reference internal" href="slurm.html"><span class="std std-doc">SLURM reference</span></a>).</p>
+</section>
+<section id="module-overview">
+<h2>Module overview<a class="headerlink" href="#module-overview" title="Link to this heading">¶</a></h2>
+<p>The reusable logic lives in the <code class="docutils literal notranslate"><span class="pre">rainfall_rescue_sqlite</span></code> package; the notebooks
+and <code class="docutils literal notranslate"><span class="pre">scripts/</span></code> entry points are thin wrappers around it.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>src/rainfall_rescue_sqlite/
+├── parquet_ingest.py            Rainfall Rescue + ensemble JSON → Parquet
+├── ensemble_parser.py           Parse an ensemble transcription JSON file
+├── parquet_similarity.py        Build vectors, match RR ↔ ensemble
+├── comparison_baseline.py       Similarity scoring (exact-month agreement)
+├── assign_ensemble_metadata.py  Copy RR metadata onto matched records
+├── parquet_qc_exact_monthly.py  QC1: monthly-total consistency
+├── parquet_regional_stats.py    QC2 stage 1: regional neighbour statistics
+├── parquet_secondary_qc.py      QC2 stage 2: XGBoost expectation-range check
+├── sef_export.py                Merge duplicates → SEF .tsv files
+├── sef_analysis.py              Parse SEF → analysis Parquet + aggregates
+├── rainfall_animation.py        Consensus-rainfall frame rendering
+└── sef_animation.py             SEF-rainfall frame rendering
+</pre></div>
+</div>
+</section>
+<section id="data-flow">
+<h2>Data flow<a class="headerlink" href="#data-flow" title="Link to this heading">¶</a></h2>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>Rainfall Rescue CSV        Ensemble transcription JSON
+        │                              │
+        ▼                              ▼
+   parquet_ingest.py             parquet_ingest.py
+   RR monthly Parquet            ensemble Parquet (5 members / cell)
+        │                              │
+        └──────────────┬───────────────┘
+                       ▼
+              parquet_similarity.py            match each transcription
+              assign_ensemble_metadata.py      to an RR station-year, borrow
+                       │                        location metadata
+                       ▼
+              parquet_qc_exact_monthly.py       QC1 (monthly totals)
+                       │
+                       ▼
+              daily_consensus  →  parquet_regional_stats.py     QC2 stage 1
+                       │
+                       ▼
+              parquet_secondary_qc.py           QC2 stage 2 (XGBoost)
+                       │
+                       ▼
+                 sef_export.py                  → SEF .tsv (mm, QC verdicts)
+                       │
+        ┌──────────────┼──────────────┐
+        ▼              ▼               ▼
+ sef_analysis.py  rainfall_animation  sef_animation
+ summary figures     .mp4 (inches)    .mp4 (mm, QC shown)
+</pre></div>
+</div>
+</section>
+<section id="key-design-decisions">
+<h2>Key design decisions<a class="headerlink" href="#key-design-decisions" title="Link to this heading">¶</a></h2>
+<section id="consensus-not-a-single-reading">
+<h3>Consensus, not a single reading<a class="headerlink" href="#consensus-not-a-single-reading" title="Link to this heading">¶</a></h3>
+<p>Every station-year was transcribed five times by the parent project. The
+pipeline works with the <strong>median across those five members</strong> as the consensus
+value, and uses the spread between members as a signal that quality control can
+act on.</p>
+</section>
+<section id="conservative-georeferencing">
+<h3>Conservative georeferencing<a class="headerlink" href="#conservative-georeferencing" title="Link to this heading">¶</a></h3>
+<p>A wrong station location would corrupt the regional QC, the maps, and the SEF
+export. Metadata is therefore only assigned on a confident match — an exact
+rank-1 agreement, or a tightly-clustered top-3 centroid — and left null
+otherwise. See <a class="reference internal" href="../workflow/matching.html"><span class="std std-doc">Matching</span></a>.</p>
+</section>
+<section id="two-independent-qc-checks">
+<h3>Two independent QC checks<a class="headerlink" href="#two-independent-qc-checks" title="Link to this heading">¶</a></h3>
+<p>QC1 (monthly totals) and QC2 (regional neighbours) test different things and rely
+on different data, so an observation that passes both is trustworthy for
+different reasons. QC2 also acts as a rescue path for observations QC1 rejects, so
+a single bad month doesn’t discard a whole file’s good days. See
+<a class="reference internal" href="../workflow/quality-control.html"><span class="std std-doc">Quality control</span></a>.</p>
+</section>
+<section id="analyse-only-the-deliverable">
+<h3>Analyse only the deliverable<a class="headerlink" href="#analyse-only-the-deliverable" title="Link to this heading">¶</a></h3>
+<p>The analysis and SEF-animation stages read <strong>only the exported SEF files</strong>,
+nothing from the working databases. This validates the actual shared product and
+catches export bugs that upstream checks would miss.</p>
+</section>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="../index.html">
+              <img class="logo" src="../_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="../index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/reference/architecture.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="scripts.html" title="Scripts and SLURM jobs"
+             >next</a></li>
+        <li class="right" >
+          <a href="slurm.html" title="SLURM and HPC"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Architecture</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

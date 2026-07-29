@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>How to reproduce and extend &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="_static/sphinxdoc.css?v=34905f61" />
+    <script src="_static/documentation_options.js?v=01f34227"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="prev" title="Scripts and SLURM jobs" href="reference/scripts.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="reference/scripts.html" title="Scripts and SLURM jobs"
+             accesskey="P">previous</a></li>
+        <li class="nav-item nav-item-0"><a href="index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">How to reproduce and extend</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="how-to-reproduce-and-extend">
+<h1>How to reproduce and extend<a class="headerlink" href="#how-to-reproduce-and-extend" title="Link to this heading">¶</a></h1>
+<p>This project is designed to be reproduced and extended. Everything — code,
+notebooks, environment specification, and this documentation — lives in a single
+Git repository:
+<a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO">github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO</a>.</p>
+<p>If you are familiar with GitHub, fork or clone the repository. If you’d rather
+not, you can download the whole thing as a
+<a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/archive/refs/heads/main.zip">zip file</a>.</p>
+<section id="software-environment">
+<h2>Software environment<a class="headerlink" href="#software-environment" title="Link to this heading">¶</a></h2>
+<p>Everything runs in the <code class="docutils literal notranslate"><span class="pre">ADRQ</span></code> Conda environment specified in
+<code class="docutils literal notranslate"><span class="pre">environments/ADRQ.yml</span></code>. See <a class="reference internal" href="installation.html"><span class="std std-doc">Installation</span></a> for the one-time
+setup, then activate it before doing anything else:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>conda<span class="w"> </span>activate<span class="w"> </span>ADRQ
+</pre></div>
+</div>
+</section>
+<section id="compute">
+<h2>Compute<a class="headerlink" href="#compute" title="Link to this heading">¶</a></h2>
+<p>The local machine is used only for orchestration and the small in-notebook
+demonstrations. The compute-intensive work — matching every transcription
+against every Rainfall Rescue station-year, quality control over hundreds of
+millions of station-days, the SEF export, and the animation renders — runs on the
+<a class="reference internal" href="reference/slurm.html"><span class="std std-doc">SPICE HPC cluster</span></a> via SLURM.</p>
+<p>The processing code itself is not cluster-specific and will run in any suitable
+Python environment; the submission scripts and job specs under <code class="docutils literal notranslate"><span class="pre">scripts/slurm/</span></code>
+are written for a SLURM scheduler and configured through
+<code class="docutils literal notranslate"><span class="pre">scripts/slurm/config.sh</span></code>.</p>
+</section>
+<section id="running-the-workflow">
+<h2>Running the workflow<a class="headerlink" href="#running-the-workflow" title="Link to this heading">¶</a></h2>
+<p>The workflow is driven by the notebooks under <code class="docutils literal notranslate"><span class="pre">notebooks/</span></code>, run in order. Start
+with the <a class="reference internal" href="workflow/overview.html"><span class="std std-doc">workflow overview</span></a>, which lays out the stages and
+links to each notebook.</p>
+</section>
+<section id="the-documentation">
+<h2>The documentation<a class="headerlink" href="#the-documentation" title="Link to this heading">¶</a></h2>
+<p>These web pages are built with <a class="reference external" href="https://www.sphinx-doc.org/">Sphinx</a> from the
+Markdown sources in the <code class="docutils literal notranslate"><span class="pre">docs/</span></code> directory, and published to
+<a class="reference external" href="https://pages.github.com/">GitHub Pages</a> automatically on every push to <code class="docutils literal notranslate"><span class="pre">main</span></code>
+by the workflow in <code class="docutils literal notranslate"><span class="pre">.github/workflows/docs.yml</span></code>. To build them locally:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>pip<span class="w"> </span>install<span class="w"> </span>sphinx<span class="w"> </span>myst-parser
+sphinx-build<span class="w"> </span>-b<span class="w"> </span>html<span class="w"> </span>docs<span class="w"> </span>docs/_build/html
+</pre></div>
+</div>
+<p>or, from inside the <code class="docutils literal notranslate"><span class="pre">docs/</span></code> directory with the <code class="docutils literal notranslate"><span class="pre">ADRQ</span></code> environment active:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>make<span class="w"> </span>html
+</pre></div>
+</div>
+</section>
+<section id="credits-and-acknowledgements">
+<h2>Credits and acknowledgements<a class="headerlink" href="#credits-and-acknowledgements" title="Link to this heading">¶</a></h2>
+<p>This is the quality-control follow-on to
+<a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-MO">Auto Daily Rainfall</a>,
+which established the small-VLM ensemble approach that produced the daily
+transcriptions quality-controlled here.</p>
+<p>The monthly rainfall records that anchor every station’s location and metadata
+come from <a class="reference external" href="https://climatelabbook.substack.com/p/rainfall-rescue-5-years-on">Ed Hawkins</a>’s
+<a class="reference external" href="https://github.com/ed-hawkins/rainfall-rescue">Rainfall Rescue</a> project and its
+army of volunteer transcribers.</p>
+</section>
+<section id="contact">
+<h2>Contact<a class="headerlink" href="#contact" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/issues/new">Raise an issue</a></p></li>
+<li><p>Contact <a class="reference external" href="mailto:philip&#46;brohan&#37;&#52;&#48;metoffice&#46;gov&#46;uk">Philip Brohan</a></p></li>
+</ul>
+<p>This document is distributed under the terms of the
+<a class="reference external" href="https://www.nationalarchives.gov.uk/doc/open-government-licence/version/2/">Open Government Licence</a>.
+Source code is distributed under the terms of the
+<a class="reference external" href="https://opensource.org/licenses/BSD-2-Clause">BSD licence</a>.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="index.html">
+              <img class="logo" src="_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="workflow/ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="reference/slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference/scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/reproduce.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="reference/scripts.html" title="Scripts and SLURM jobs"
+             >previous</a></li>
+        <li class="nav-item nav-item-0"><a href="index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">How to reproduce and extend</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

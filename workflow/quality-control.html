@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Quality control &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinxdoc.css?v=34905f61" />
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Export" href="export.html" />
+    <link rel="prev" title="Matching" href="matching.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="export.html" title="Export"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="matching.html" title="Matching"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Quality control</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="quality-control">
+<h1>Quality control<a class="headerlink" href="#quality-control" title="Link to this heading">¶</a></h1>
+<p>Now that the daily records are located, we can ask the important question: are
+the transcribed values <em>right</em>? This stage attaches a quality verdict to every
+observation using two independent checks.</p>
+<p>Three notebooks:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/qc_RR_monthly_total.ipynb">qc_RR_monthly_total.ipynb</a> — QC check 1</p></li>
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/qc_RR_regional_stats.ipynb">qc_RR_regional_stats.ipynb</a> — QC check 2, stage 1</p></li>
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/qc_RR_secondary_ml.ipynb">qc_RR_secondary_ml.ipynb</a> — QC check 2, stage 2</p></li>
+</ul>
+<p>The two checks are complementary. QC1 is strict and independent but only covers
+stations with an exact monthly match; QC2 is a softer, spatial check that
+re-examines the observations QC1 rejects, so that a single suspect month doesn’t
+needlessly throw away good days.</p>
+<section id="qc-check-1-monthly-total-consistency">
+<h2>QC check 1 — monthly-total consistency<a class="headerlink" href="#qc-check-1-monthly-total-consistency" title="Link to this heading">¶</a></h2>
+<p>The first check uses the station’s own monthly totals as ground truth. For every
+transcription with an exact rank-1 RR match, it:</p>
+<ol class="arabic simple">
+<li><p>recomputes each <strong>monthly total</strong> from the consensus daily values (the median
+across members per day),</p></li>
+<li><p>compares that to the matched <strong>RR monthly value</strong>, and</p></li>
+<li><p>flags every day in that file-month as <code class="docutils literal notranslate"><span class="pre">pass</span></code> if the difference is within
+tolerance, else <code class="docutils literal notranslate"><span class="pre">fail</span></code>.</p></li>
+</ol>
+<p>This is a genuinely independent check: the RR monthly totals were digitised by a
+completely different process (volunteers reading the monthly sheets), so
+agreement is strong evidence the daily transcription is correct.</p>
+<p>The full dataset has ~514,000 file IDs, so the notebook demonstrates the check on
+a slice and submits the rest to the cluster (<code class="docutils literal notranslate"><span class="pre">qc_array</span></code> + <code class="docutils literal notranslate"><span class="pre">qc_merge</span></code>):</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_qc.sh
+</pre></div>
+</div>
+<p>Outputs land in Parquet under <code class="docutils literal notranslate"><span class="pre">qc_root</span></code>: <code class="docutils literal notranslate"><span class="pre">qc_sessions</span></code>, <code class="docutils literal notranslate"><span class="pre">daily_qc_results</span></code>, and
+<code class="docutils literal notranslate"><span class="pre">daily_qc_status</span></code>.</p>
+</section>
+<section id="qc-check-2-regional-consistency">
+<h2>QC check 2 — regional consistency<a class="headerlink" href="#qc-check-2-regional-consistency" title="Link to this heading">¶</a></h2>
+<p>QC1 can only judge stations with an exact monthly match, and it fails a <em>whole
+month</em> if the total is off. QC check 2 provides a spatial second opinion,
+focused on the observations QC1 failed. It runs in two stages.</p>
+<section id="stage-1-regional-neighbour-statistics">
+<h3>Stage 1 — regional neighbour statistics<a class="headerlink" href="#stage-1-regional-neighbour-statistics" title="Link to this heading">¶</a></h3>
+<p>For every located station-day,
+<a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/qc_RR_regional_stats.ipynb">qc_RR_regional_stats</a>
+computes robust statistics from the neighbours that <strong>passed QC1</strong> on the same
+calendar day — the median of their rainfall, the number of such neighbours, and
+the median absolute deviation — at both <strong>20 km</strong> and <strong>50 km</strong>. The station
+itself is always excluded.</p>
+<p>This stage has two prerequisites, run in order:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="c1"># 1. Build the daily-consensus table first (the per-day ensemble median).</span>
+scripts/slurm/submit_daily_consensus.sh
+
+<span class="c1"># 2. Compute the regional statistics (reads that table).</span>
+scripts/slurm/submit_regional_stats.sh
+</pre></div>
+</div>
+<p>The consensus median is precomputed once, sharded by <code class="docutils literal notranslate"><span class="pre">file_id</span></code>, because computing
+it inside the regional shards would exhaust memory — a geographically scattered
+shard needs consensus values for a near-national set of stations, and DuckDB’s
+grouped <code class="docutils literal notranslate"><span class="pre">median()</span></code> cannot spill to disc. <code class="docutils literal notranslate"><span class="pre">submit_regional_stats.sh</span></code> refuses to run
+until the consensus table exists.</p>
+</section>
+<section id="stage-2-the-secondary-ml-check">
+<h3>Stage 2 — the secondary ML check<a class="headerlink" href="#stage-2-the-secondary-ml-check" title="Link to this heading">¶</a></h3>
+<p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/qc_RR_secondary_ml.ipynb">qc_RR_secondary_ml</a>
+turns those regional statistics into a test. Two gradient-boosted
+(<a class="reference external" href="https://xgboost.readthedocs.io/">XGBoost</a>) models are trained <strong>only on the
+reliable QC1-pass rows</strong>:</p>
+<ul class="simple">
+<li><p><strong>Model 1</strong> predicts a station’s own consensus rainfall from its regional
+statistics.</p></li>
+<li><p><strong>Model 2</strong> predicts the <em>absolute error</em> of Model 1, giving a per-row expected
+uncertainty.</p></li>
+</ul>
+<p>A multiplier <code class="docutils literal notranslate"><span class="pre">k</span></code> is calibrated on a held-out split so that a target fraction
+(default 99%) of reliable rows fall inside <code class="docutils literal notranslate"><span class="pre">prediction</span> <span class="pre">±</span> <span class="pre">k</span> <span class="pre">·</span> <span class="pre">predicted_error</span></code>.
+That interval is the <strong>expectation range</strong>. Each QC1-fail row is then re-judged:</p>
+<ul class="simple">
+<li><p>inside the range → <code class="docutils literal notranslate"><span class="pre">pass</span></code> (rescued),</p></li>
+<li><p>outside it → <code class="docutils literal notranslate"><span class="pre">fail</span></code> (a QC suspect),</p></li>
+<li><p>no usable neighbours → <code class="docutils literal notranslate"><span class="pre">indeterminate</span></code>.</p></li>
+</ul>
+<p>Run the two dependent jobs (train, then score) with:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_secondary_qc.sh
+</pre></div>
+</div>
+<p>Models land under <code class="docutils literal notranslate"><span class="pre">secondary_qc_root/models/</span></code>, and the scored flags in
+<code class="docutils literal notranslate"><span class="pre">secondary_qc_root/secondary_qc_status/</span></code>.</p>
+</section>
+</section>
+<section id="inspecting-the-verdicts">
+<h2>Inspecting the verdicts<a class="headerlink" href="#inspecting-the-verdicts" title="Link to this heading">¶</a></h2>
+<p>Each QC notebook ends with an interactive Plotly map that colours stations by
+their flag for a chosen date — <code class="docutils literal notranslate"><span class="pre">pass</span></code>/<code class="docutils literal notranslate"><span class="pre">fail</span></code> for QC1, and
+<code class="docutils literal notranslate"><span class="pre">pass</span></code>/<code class="docutils literal notranslate"><span class="pre">fail</span></code>/<code class="docutils literal notranslate"><span class="pre">indeterminate</span></code> for the secondary check. Clicking a station copies
+its specifier to the clipboard so you can pull up its full diagnostic.</p>
+<figure class="align-default" id="id1">
+<a class="reference internal image-reference" href="../_images/qc_flag_map.png"><img alt="Stations coloured by their QC verdict for a single date" src="../_images/qc_flag_map.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">The QC verdicts made visible for a single date: stations that passed are drawn
+with their rainfall value, while those that failed <strong>both</strong> checks are marked
+with a red cross and excluded from the field.</span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p>Next: <a class="reference internal" href="export.html"><span class="std std-doc">Export</span></a>.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="../index.html">
+              <img class="logo" src="../_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="../index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="matching.html">Matching</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../reference/slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/workflow/quality-control.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="export.html" title="Export"
+             >next</a></li>
+        <li class="right" >
+          <a href="matching.html" title="Matching"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Quality control</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Matching &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinxdoc.css?v=34905f61" />
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Quality control" href="quality-control.html" />
+    <link rel="prev" title="Ingestion" href="ingestion.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="quality-control.html" title="Quality control"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="ingestion.html" title="Ingestion"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Matching</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="matching">
+<h1>Matching<a class="headerlink" href="#matching" title="Link to this heading">¶</a></h1>
+<p>A daily transcription on its own is just a grid of numbers — we don’t know which
+station or where. This stage fixes that by matching every transcription to a
+Rainfall Rescue station-year and borrowing its location metadata.</p>
+<p>One notebook:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/match_metadata.ipynb">match_metadata.ipynb</a></p></li>
+</ul>
+<section id="the-matching-idea">
+<h2>The matching idea<a class="headerlink" href="#the-matching-idea" title="Link to this heading">¶</a></h2>
+<p>Both datasets describe the same physical stations, so their <strong>monthly totals
+should agree</strong>. Rainfall Rescue stores the monthly totals directly; for the daily
+transcriptions we sum the consensus daily values into monthly totals. Matching
+then compares these month-by-month:</p>
+<ul class="simple">
+<li><p><strong>RR vectors</strong> — station-year monthly profiles from the monthly data.</p></li>
+<li><p><strong>Ensemble vectors</strong> — monthly values from all five ensemble members.</p></li>
+<li><p><strong>Primary score</strong> — the count of months where the RR value equals <em>any</em>
+ensemble member value (both rounded to two decimal places).</p></li>
+<li><p><strong>Tie-breaker</strong> — the higher count of overlapping (jointly non-blank) months.</p></li>
+</ul>
+<p>Cosine and adjusted scores are also stored, for diagnostics and comparability
+with earlier versions.</p>
+</section>
+<section id="full-scale-matching-on-slurm">
+<h2>Full-scale matching on SLURM<a class="headerlink" href="#full-scale-matching-on-slurm" title="Link to this heading">¶</a></h2>
+<p>The notebook runs the matcher interactively on a bounded slice to stay fast.
+Matching <em>every</em> transcription (~514,000 files) against <em>every</em> RR station-year
+(~285,000) is a cluster job, split into shards:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Stage</p></th>
+<th class="head"><p>Script</p></th>
+<th class="head"><p>SLURM</p></th>
+<th class="head"><p>Purpose</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>build</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">scripts/slurm/build_vectors.sbatch</span></code></p></td>
+<td><p>1 job</p></td>
+<td><p>build the normalised comparison-vector Parquet files (the RAM-heavy step)</p></td>
+</tr>
+<tr class="row-odd"><td><p>match</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">scripts/slurm/match_array.sbatch</span></code></p></td>
+<td><p>array <code class="docutils literal notranslate"><span class="pre">0–99</span></code></p></td>
+<td><p>match each shard’s slice against all RR candidates</p></td>
+</tr>
+<tr class="row-even"><td><p>merge</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">scripts/slurm/merge_shards.sbatch</span></code></p></td>
+<td><p>1 job</p></td>
+<td><p>consolidate the shard results into one session</p></td>
+</tr>
+</tbody>
+</table>
+<p>Launch it from a login node:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_all.sh
+</pre></div>
+</div>
+<p>Pass <code class="docutils literal notranslate"><span class="pre">--skip-build</span></code> to reuse previously built vectors when only the matching
+parameters have changed:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_all.sh<span class="w"> </span>--skip-build
+</pre></div>
+</div>
+<p>Shard count, matching parameters, and the Parquet paths are configured in
+<code class="docutils literal notranslate"><span class="pre">scripts/slurm/config.sh</span></code>.</p>
+</section>
+<section id="assigning-the-metadata">
+<h2>Assigning the metadata<a class="headerlink" href="#assigning-the-metadata" title="Link to this heading">¶</a></h2>
+<p>With the matches in hand, each ensemble record is enriched with station metadata.
+The rule is deliberately conservative — a wrong location poisons everything
+downstream, so we only assign one when we are confident:</p>
+<ul class="simple">
+<li><p><strong>Exact match</strong> — a rank-1 match with at least 9 exactly-agreeing months, and
+no more than 3 monthly values that are exactly zero in the transcription (the
+zero guard rejects spurious agreement on empty months). All metadata is copied:
+location name, year, latitude, longitude, and elevation.</p></li>
+<li><p><strong>Approximate match</strong> — the top-3 ranks by score. A <strong>year</strong> is assigned only
+if all three agree on it; a <strong>position</strong> only if all three lie within 1.0° of
+each other (then the centroid is used). Location name and elevation stay null.</p></li>
+<li><p><strong>Unmatched</strong> — all metadata stays null.</p></li>
+</ul>
+</section>
+<section id="diagnostics">
+<h2>Diagnostics<a class="headerlink" href="#diagnostics" title="Link to this heading">¶</a></h2>
+<p>Several scripts under <code class="docutils literal notranslate"><span class="pre">scripts/diagnostics/</span></code> let you inspect the result:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">plot_image_consensus_metadata.py</span></code> — a one-page diagnostic for a single
+transcription: the scanned image, the consensus table, the monthly-total
+comparison against the matched RR station-year, and a map of the match.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">plot_daily_rainfall_map.py</span></code> — every located station’s consensus rainfall for a
+single date, on a UK map.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">plot_daily_rainfall_interactive.py</span></code> — the same map as an interactive Plotly
+figure; clicking a station copies its specifier to the clipboard.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">plot_rr_match_counts_interactive.py</span></code> — a matching-health map showing how many
+ensemble files exactly match each RR station-year, to spot “attractor”
+station-years that soak up too many matches.</p></li>
+</ul>
+<figure class="align-default" id="id1">
+<a class="reference internal image-reference" href="../_images/daily_rainfall_map.png"><img alt="Consensus daily rainfall for every located station on a single date" src="../_images/daily_rainfall_map.png" style="width: 60%;" />
+</a>
+<figcaption>
+<p><span class="caption-text">Consensus daily rainfall for every located station on a single date (drawn with
+the same code as <code class="docutils literal notranslate"><span class="pre">plot_daily_rainfall_map.py</span></code>). Each point is one matched
+station-year — over 9,000 for this day in 1931.</span><a class="headerlink" href="#id1" title="Link to this image">¶</a></p>
+</figcaption>
+</figure>
+<p>Next: <a class="reference internal" href="quality-control.html"><span class="std std-doc">Quality control</span></a>.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="../index.html">
+              <img class="logo" src="../_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="../index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="ingestion.html">Ingestion</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../reference/slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/workflow/matching.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="quality-control.html" title="Quality control"
+             >next</a></li>
+        <li class="right" >
+          <a href="ingestion.html" title="Ingestion"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Matching</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

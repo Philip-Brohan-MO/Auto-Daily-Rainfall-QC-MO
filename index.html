@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Auto Daily Rainfall QC &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="_static/sphinxdoc.css?v=34905f61" />
+    <script src="_static/documentation_options.js?v=01f34227"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Installation" href="installation.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="installation.html" title="Installation"
+             accesskey="N">next</a></li>
+        <li class="nav-item nav-item-0"><a href="#">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Auto Daily Rainfall QC</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="auto-daily-rainfall-qc">
+<h1>Auto Daily Rainfall QC<a class="headerlink" href="#auto-daily-rainfall-qc" title="Link to this heading">¶</a></h1>
+<p><strong>Locating, quality-controlling, and sharing hundreds of thousands of
+machine-transcribed daily rainfall observations rescued from historical
+documents.</strong></p>
+<hr class="docutils" />
+<p>This is the quality-control follow-on to
+<a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-MO">Auto Daily Rainfall</a>,
+which used an ensemble of small
+<a class="reference external" href="https://huggingface.co/blog/vlms">vision-language models (VLMs)</a> to read about
+<strong>660,000</strong> scanned daily rainfall registers into structured JSON — five
+independent transcriptions of every station-year image.</p>
+<p>Raw transcriptions are not yet usable science. Before the recovered numbers can
+be trusted or shared they need three things, and that is what this project does:</p>
+<ol class="arabic simple">
+<li><p><strong>Location.</strong> A transcription on its own is just a grid of numbers. We match
+each one to the already-digitised
+<a class="reference external" href="https://climatelabbook.substack.com/p/rainfall-rescue-5-years-on">Rainfall Rescue</a>
+monthly records, which carry station names and coordinates, so every daily
+record becomes a <em>georeferenced</em> station-year.</p></li>
+<li><p><strong>Quality control.</strong> We check the daily values two independent ways — against
+the station’s own monthly totals, and against what neighbouring stations
+recorded on the same day — and attach a quality verdict to every observation.</p></li>
+<li><p><strong>Sharing.</strong> We export the located, quality-controlled data in the
+<a class="reference external" href="https://datarescue.climate.copernicus.eu/station-exchange-format-sef">Station Exchange Format (SEF)</a>,
+the community standard for rescued climate observations.</p></li>
+</ol>
+<section id="the-approach">
+<h2>The approach<a class="headerlink" href="#the-approach" title="Link to this heading">¶</a></h2>
+<p>As with the parent project, the whole thing is <strong>driven by a series of
+notebooks</strong> that you can open, read, and run. Each notebook documents one stage
+of the pipeline: it explains what the stage does, runs a small demonstration
+locally, and submits the full-scale work to the
+<a class="reference internal" href="reference/slurm.html"><span class="std std-doc">SPICE HPC cluster</span></a> via SLURM.</p>
+<p>Two ideas run through the workflow:</p>
+<ul class="simple">
+<li><p><strong>Consensus from the ensemble.</strong> Every station-year was transcribed five
+times. The <em>consensus</em> value for a day is the median across those five
+members; where the members disagree we can see it, and quality control can act
+on it.</p></li>
+<li><p><strong>Borrow metadata, don’t invent it.</strong> We never guess a station’s location. We
+only assign coordinates when a daily record matches a Rainfall Rescue
+station-year closely enough to be confident it is the same station.</p></li>
+</ul>
+<p>The <a class="reference internal" href="workflow/overview.html"><span class="std std-doc">workflow overview</span></a> explains how the notebooks fit
+together; the pages under it walk through each stage.</p>
+</section>
+<section id="the-pipeline-at-a-glance">
+<h2>The pipeline at a glance<a class="headerlink" href="#the-pipeline-at-a-glance" title="Link to this heading">¶</a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Stage</p></th>
+<th class="head"><p>Notebooks</p></th>
+<th class="head"><p>What happens</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><a class="reference internal" href="workflow/ingestion.html"><span class="std std-doc">Ingestion</span></a></p></td>
+<td><p>2</p></td>
+<td><p>Load the Rainfall Rescue monthly data and the daily ensemble transcriptions into a Parquet/DuckDB backend</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="workflow/matching.html"><span class="std std-doc">Matching</span></a></p></td>
+<td><p>1</p></td>
+<td><p>Match each daily transcription to a Rainfall Rescue station-year and borrow its location metadata</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="workflow/quality-control.html"><span class="std std-doc">Quality control</span></a></p></td>
+<td><p>3</p></td>
+<td><p>Check daily values against monthly totals (QC1) and against regional neighbours (QC2)</p></td>
+</tr>
+<tr class="row-odd"><td><p><a class="reference internal" href="workflow/export.html"><span class="std std-doc">Export</span></a></p></td>
+<td><p>1</p></td>
+<td><p>Merge duplicates and write one SEF <code class="docutils literal notranslate"><span class="pre">.tsv</span></code> per real station-year, in millimetres, with QC verdicts</p></td>
+</tr>
+<tr class="row-even"><td><p><a class="reference internal" href="workflow/analysis.html"><span class="std std-doc">Analysis</span></a></p></td>
+<td><p>3</p></td>
+<td><p>Summarise the shared dataset and animate the daily rainfall field</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="get-started">
+<h2>Get started<a class="headerlink" href="#get-started" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference internal" href="installation.html"><span class="std std-doc">Installation</span></a> — set up the <code class="docutils literal notranslate"><span class="pre">ADRQ</span></code> environment.</p></li>
+<li><p><a class="reference internal" href="workflow/overview.html"><span class="std std-doc">Workflow overview</span></a> — the staged, notebook-driven pipeline.</p></li>
+<li><p><a class="reference internal" href="reproduce.html"><span class="std std-doc">How to reproduce and extend</span></a> — code, compute, and credits.</p></li>
+</ul>
+<div class="toctree-wrapper compound">
+</div>
+<div class="toctree-wrapper compound">
+</div>
+<div class="toctree-wrapper compound">
+</div>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="#">
+              <img class="logo" src="_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="#">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="workflow/ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="reference/slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference/scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/index.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="installation.html" title="Installation"
+             >next</a></li>
+        <li class="nav-item nav-item-0"><a href="#">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Auto Daily Rainfall QC</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

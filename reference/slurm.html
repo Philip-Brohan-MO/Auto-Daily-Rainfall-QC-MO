@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>SLURM and HPC &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinxdoc.css?v=34905f61" />
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Architecture" href="architecture.html" />
+    <link rel="prev" title="Analysis" href="../workflow/analysis.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="architecture.html" title="Architecture"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="../workflow/analysis.html" title="Analysis"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">SLURM and HPC</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="slurm-and-hpc">
+<h1>SLURM and HPC<a class="headerlink" href="#slurm-and-hpc" title="Link to this heading">¶</a></h1>
+<p>This guide covers running the pipeline at scale on the
+<a class="reference external" href="https://www.metoffice.gov.uk/">SPICE HPC cluster</a> with the
+<a class="reference external" href="https://slurm.schedmd.com/">SLURM</a> scheduler. The notebooks demonstrate each
+stage on a small slice locally; the full dataset — hundreds of thousands of
+station-years and hundreds of millions of station-days — is processed here.</p>
+<section id="the-sharding-pattern">
+<h2>The sharding pattern<a class="headerlink" href="#the-sharding-pattern" title="Link to this heading">¶</a></h2>
+<p>Almost every heavy stage follows the same <strong>array + merge</strong> shape, because the
+work is naturally parallel over independent units (files, station-years, or
+frames):</p>
+<ol class="arabic simple">
+<li><p>An optional <strong>build/precompute</strong> job prepares shared inputs once (the
+RAM-heavy step).</p></li>
+<li><p>An <strong>array job</strong> splits the work into <code class="docutils literal notranslate"><span class="pre">N</span></code> shards that run in parallel, each
+writing a private output file.</p></li>
+<li><p>A single <strong>merge</strong> job consolidates the shard outputs.</p></li>
+</ol>
+<p>The stages are chained with <code class="docutils literal notranslate"><span class="pre">--dependency=afterok</span></code>, so each starts only when the
+previous one has succeeded, and a failed shard can be re-run on its own without
+disturbing the others.</p>
+</section>
+<section id="configuration">
+<h2>Configuration<a class="headerlink" href="#configuration" title="Link to this heading">¶</a></h2>
+<p>Every parameter — paths, shard counts, matching and QC parameters, and the
+per-stage resource requests (cores, memory, wall-clock time, QOS) — lives in a
+single file:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>scripts/slurm/config.sh
+</pre></div>
+</div>
+<p>The <code class="docutils literal notranslate"><span class="pre">submit_*.sh</span></code> driver scripts source this file and pass the values to <code class="docutils literal notranslate"><span class="pre">sbatch</span></code>
+as CLI flags, so they override the <code class="docutils literal notranslate"><span class="pre">#SBATCH</span></code> defaults baked into each <code class="docutils literal notranslate"><span class="pre">.sbatch</span></code>
+file. Most values can also be overridden inline at submit time, for example:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span><span class="nv">ENSEMBLE_ROOT</span><span class="o">=</span>/path/to/json<span class="w"> </span><span class="nv">ENSEMBLE_MAX_FILES</span><span class="o">=</span><span class="m">500</span><span class="w"> </span><span class="se">\</span>
+<span class="w">    </span>scripts/slurm/submit_ensemble_ingest.sh
+</pre></div>
+</div>
+<p>Two paths anchor everything:</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Variable</p></th>
+<th class="head"><p>Meaning</p></th>
+<th class="head"><p>Default</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">REPO_ROOT</span></code></p></td>
+<td><p>the repository checkout</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">…/Auto-Daily-Rainfall-QC-MO</span></code></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">PDIR</span></code></p></td>
+<td><p>shared disc for all datasets, shards and logs</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">/data/scratch/philip.brohan/ADRQ</span></code></p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="the-pipelines">
+<h2>The pipelines<a class="headerlink" href="#the-pipelines" title="Link to this heading">¶</a></h2>
+<p>Each workflow stage has a <code class="docutils literal notranslate"><span class="pre">submit_*.sh</span></code> driver. Run them from a login node with
+the repository root as the working directory.</p>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Stage</p></th>
+<th class="head"><p>Submit script</p></th>
+<th class="head"><p>Shape</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Ensemble ingest</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_ensemble_ingest.sh</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-odd"><td><p>Similarity matching</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_all.sh</span></code></p></td>
+<td><p>build + array + merge</p></td>
+</tr>
+<tr class="row-even"><td><p>QC 1 (monthly total)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_qc.sh</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-odd"><td><p>Daily consensus</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_daily_consensus.sh</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-even"><td><p>QC 2 stage 1 (regional stats)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_regional_stats.sh</span></code></p></td>
+<td><p>array + merge</p></td>
+</tr>
+<tr class="row-odd"><td><p>QC 2 stage 2 (secondary ML)</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_secondary_qc.sh</span></code></p></td>
+<td><p>train + score</p></td>
+</tr>
+<tr class="row-even"><td><p>SEF export</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_sef_export.sh</span></code></p></td>
+<td><p>array (no merge)</p></td>
+</tr>
+<tr class="row-odd"><td><p>SEF analysis dataset</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_sef_analysis.sh</span></code></p></td>
+<td><p>array (no merge)</p></td>
+</tr>
+<tr class="row-even"><td><p>Consensus animation</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_animation.sh</span></code></p></td>
+<td><p>precompute + array + validate + encode</p></td>
+</tr>
+<tr class="row-odd"><td><p>SEF animation</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">submit_sef_animation.sh</span></code></p></td>
+<td><p>precompute + array + validate + encode</p></td>
+</tr>
+</tbody>
+</table>
+<p>See the <a class="reference internal" href="scripts.html"><span class="std std-doc">scripts reference</span></a> for the individual <code class="docutils literal notranslate"><span class="pre">.sbatch</span></code> files behind
+each driver, and the <a class="reference internal" href="../workflow/overview.html"><span class="std std-doc">workflow pages</span></a> for the context in
+which each is run.</p>
+<section id="ordering-constraints">
+<h3>Ordering constraints<a class="headerlink" href="#ordering-constraints" title="Link to this heading">¶</a></h3>
+<p>Most stages depend on the output of the one before it, so run the notebooks (and
+their submit scripts) in order. Two dependencies are worth calling out:</p>
+<ul class="simple">
+<li><p><strong>Regional stats</strong> requires the <strong>daily-consensus</strong> table first — run
+<code class="docutils literal notranslate"><span class="pre">submit_daily_consensus.sh</span></code> before <code class="docutils literal notranslate"><span class="pre">submit_regional_stats.sh</span></code>. The latter
+guards on the consensus table existing and exits with instructions if it is
+missing.</p></li>
+<li><p><strong>The secondary ML check</strong> requires both <strong>QC1</strong> (<code class="docutils literal notranslate"><span class="pre">daily_qc_status</span></code>) and <strong>QC2
+stage 1</strong> (the regional-stats table) to exist.</p></li>
+</ul>
+</section>
+</section>
+<section id="monitoring-jobs">
+<h2>Monitoring jobs<a class="headerlink" href="#monitoring-jobs" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>squeue<span class="w"> </span>-u<span class="w"> </span><span class="nv">$USER</span><span class="w">                                              </span><span class="c1"># queued / running</span>
+sacct<span class="w"> </span>--format<span class="o">=</span>JobID%15,JobName%14,State,ExitCode,Elapsed<span class="w">   </span><span class="c1"># final states</span>
+ls<span class="w"> </span>-t<span class="w"> </span><span class="nv">$PDIR</span>/slurm_logs<span class="w"> </span><span class="p">|</span><span class="w"> </span>head<span class="w">                               </span><span class="c1"># newest per-job logs</span>
+</pre></div>
+</div>
+<p>A pipeline is finished when the queue is empty and the expected output (a merged
+Parquet dataset, a tree of <code class="docutils literal notranslate"><span class="pre">.tsv</span></code> files, or an <code class="docutils literal notranslate"><span class="pre">.mp4</span></code>) appears under <code class="docutils literal notranslate"><span class="pre">$PDIR</span></code>.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="../index.html">
+              <img class="logo" src="../_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="../index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../workflow/analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/reference/slurm.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="architecture.html" title="Architecture"
+             >next</a></li>
+        <li class="right" >
+          <a href="../workflow/analysis.html" title="Analysis"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">SLURM and HPC</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

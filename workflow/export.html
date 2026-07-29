@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Export &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="../_static/sphinxdoc.css?v=34905f61" />
+    <script src="../_static/documentation_options.js?v=01f34227"></script>
+    <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Analysis" href="analysis.html" />
+    <link rel="prev" title="Quality control" href="quality-control.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="analysis.html" title="Analysis"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="quality-control.html" title="Quality control"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Export</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="export">
+<h1>Export<a class="headerlink" href="#export" title="Link to this heading">¶</a></h1>
+<p>The located, quality-controlled observations are only useful to others if they
+are shared in a standard form. This stage writes them out in the
+<a class="reference external" href="https://datarescue.climate.copernicus.eu/station-exchange-format-sef">Station Exchange Format (SEF)</a>,
+the community standard for rescued climate data.</p>
+<p>One notebook:</p>
+<ul class="simple">
+<li><p><a class="reference external" href="https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/export_sef.ipynb">export_sef.ipynb</a></p></li>
+</ul>
+<section id="what-sef-is">
+<h2>What SEF is<a class="headerlink" href="#what-sef-is" title="Link to this heading">¶</a></h2>
+<p>SEF is a simple tab-separated text format where <strong>one file holds one variable
+from one station</strong>. Here each file is a single <em>station-year</em> of daily rainfall:
+twelve header lines of metadata, a column header, then one line per observed day.</p>
+</section>
+<section id="merging-the-ensemble-s-duplicates">
+<h2>Merging the ensemble’s duplicates<a class="headerlink" href="#merging-the-ensemble-s-duplicates" title="Link to this heading">¶</a></h2>
+<p>The ensemble frequently contains <strong>duplicate</strong> transcriptions of the same
+station-year (the same physical page transcribed more than once). The export
+merges these — exact matches sharing a location and year — into <strong>one SEF <code class="docutils literal notranslate"><span class="pre">.tsv</span></code>
+per real station-year</strong>, written to <code class="docutils literal notranslate"><span class="pre">&lt;output_root&gt;/tsv/&lt;year&gt;/&lt;ID&gt;.tsv</span></code>.</p>
+<p>For every day the value is taken from the duplicate with the <strong>best QC verdict</strong>,
+using this precedence so no day is dropped:</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>qc1=pass  &gt;  qc1=fail &amp; qc2=pass  &gt;  qc1=review
+          &gt;  qc1=fail &amp; qc2=indeterminate  &gt;  the rest
+</pre></div>
+</div>
+<p>Each observation is the consensus daily total (the member median), <strong>converted
+from inches to millimetres</strong>. The QC verdicts and the contributing <code class="docutils literal notranslate"><span class="pre">source=</span></code>
+travel in each observation’s <code class="docutils literal notranslate"><span class="pre">Meta</span></code> column (<code class="docutils literal notranslate"><span class="pre">qc1=…</span></code> from the exact-monthly check,
+<code class="docutils literal notranslate"><span class="pre">qc2=…</span></code> from the secondary check), and the file-level <code class="docutils literal notranslate"><span class="pre">Meta</span></code> lists every merged
+source.</p>
+</section>
+<section id="running-the-export">
+<h2>Running the export<a class="headerlink" href="#running-the-export" title="Link to this heading">¶</a></h2>
+<p>The notebook runs a small local export into <code class="docutils literal notranslate"><span class="pre">/var/tmp</span></code>, inspects a generated
+file, and validates its structure — confirming the twelve header lines are in the
+required order, the data-table header is correct, every day round-trips back as a
+row, and the QC verdicts are present.</p>
+<p>The full station-year export runs as a single SLURM array — there is <strong>no merge
+stage</strong>, because sharding by year keeps every duplicate of a station-year in the
+same task and each shard writes disjoint year-partitioned files:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>scripts/slurm/submit_sef_export.sh
+</pre></div>
+</div>
+<p>Each array task exports a contiguous <strong>matched-year</strong> slice. Shard count, the
+year range, and the SEF metadata fields (<code class="docutils literal notranslate"><span class="pre">SEF_SOURCE</span></code>, <code class="docutils literal notranslate"><span class="pre">SEF_LINK</span></code>,
+<code class="docutils literal notranslate"><span class="pre">SEF_OBS_HOUR</span></code>, …) are configured in the <code class="docutils literal notranslate"><span class="pre">SEF_*</span></code> block of
+<code class="docutils literal notranslate"><span class="pre">scripts/slurm/config.sh</span></code>. The prerequisites are the daily-consensus table and
+the assigned ensemble metadata; the QC tables are joined when present. Files land
+in <code class="docutils literal notranslate"><span class="pre">$PDIR/sef_export/tsv/&lt;year&gt;/&lt;ID&gt;.tsv</span></code> with per-shard manifests alongside.</p>
+<p>Next: <a class="reference internal" href="analysis.html"><span class="std std-doc">Analysis</span></a>.</p>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="../index.html">
+              <img class="logo" src="../_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="../index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../installation.html">Installation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="quality-control.html">Quality control</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../reference/slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reference/scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="../_sources/workflow/export.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="analysis.html" title="Analysis"
+             >next</a></li>
+        <li class="right" >
+          <a href="quality-control.html" title="Quality control"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="../index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Export</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>

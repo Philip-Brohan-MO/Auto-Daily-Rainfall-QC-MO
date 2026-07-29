@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="./">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <title>Installation &#8212; Auto Daily Rainfall QC</title>
+    <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=d75fae25" />
+    <link rel="stylesheet" type="text/css" href="_static/sphinxdoc.css?v=34905f61" />
+    <script src="_static/documentation_options.js?v=01f34227"></script>
+    <script src="_static/doctools.js?v=fd6eb6e6"></script>
+    <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <link rel="search" title="Search" href="search.html" />
+    <link rel="next" title="Workflow overview" href="workflow/overview.html" />
+    <link rel="prev" title="Auto Daily Rainfall QC" href="index.html" /> 
+  </head><body>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="workflow/overview.html" title="Workflow overview"
+             accesskey="N">next</a></li>
+        <li class="right" >
+          <a href="index.html" title="Auto Daily Rainfall QC"
+             accesskey="P">previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Installation</a></li> 
+      </ul>
+    </div>  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          <div class="body" role="main">
+            
+  <section id="installation">
+<h1>Installation<a class="headerlink" href="#installation" title="Link to this heading">¶</a></h1>
+<p>Everything in this project — every script and every notebook — is intended to run
+inside the <code class="docutils literal notranslate"><span class="pre">ADRQ</span></code> Conda environment. Setting that up is the only prerequisite for
+reading and running the workflow notebooks.</p>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading">¶</a></h2>
+<ul class="simple">
+<li><p><a class="reference external" href="https://docs.conda.io/en/latest/miniconda.html">Miniconda</a> or Anaconda</p></li>
+<li><p>Git</p></li>
+<li><p>A local machine is enough for orchestration and the small in-notebook
+demonstrations. The heavy work — matching, quality control, export, and
+rendering over the full dataset — runs on the SPICE HPC cluster via
+<a class="reference internal" href="reference/slurm.html"><span class="std std-doc">SLURM</span></a>; see that page for the compute setup.</p></li>
+</ul>
+</section>
+<section id="clone-the-repository">
+<h2>1 — Clone the repository<a class="headerlink" href="#clone-the-repository" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO.git
+<span class="nb">cd</span><span class="w"> </span>Auto-Daily-Rainfall-QC-MO
+</pre></div>
+</div>
+</section>
+<section id="create-the-conda-environment">
+<h2>2 — Create the Conda environment<a class="headerlink" href="#create-the-conda-environment" title="Link to this heading">¶</a></h2>
+<p>The <code class="docutils literal notranslate"><span class="pre">environments/ADRQ.yml</span></code> file pins all dependencies, including DuckDB,
+PyArrow, XGBoost, scikit-learn, Cartopy, and the Milvus vector database:</p>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>conda<span class="w"> </span>env<span class="w"> </span>create<span class="w"> </span>-f<span class="w"> </span>environments/ADRQ.yml
+conda<span class="w"> </span>activate<span class="w"> </span>ADRQ
+</pre></div>
+</div>
+<div class="admonition important">
+<p class="admonition-title">Important</p>
+<p>Activate <code class="docutils literal notranslate"><span class="pre">ADRQ</span></code> before running any script or notebook. This is non-negotiable
+for reproducibility — the notebooks assume this environment and its <code class="docutils literal notranslate"><span class="pre">ipykernel</span></code>
+kernel.</p>
+</div>
+</section>
+<section id="configure-the-project-paths">
+<h2>3 — Configure the project paths<a class="headerlink" href="#configure-the-project-paths" title="Link to this heading">¶</a></h2>
+<p>The environment file sets two variables that the code relies on:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code> — the repository root, so the project modules import cleanly.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">PDIR</span></code> — the data directory that holds the Parquet datasets and all SLURM shard
+outputs (defaults to <code class="docutils literal notranslate"><span class="pre">/data/scratch/philip.brohan/ADRQ</span></code>).</p></li>
+</ul>
+<p>Edit these in <code class="docutils literal notranslate"><span class="pre">environments/ADRQ.yml</span></code> (or export them in your shell) to match
+your own installation. The SLURM jobs read the same values from
+<code class="docutils literal notranslate"><span class="pre">scripts/slurm/config.sh</span></code>.</p>
+</section>
+<section id="select-the-kernel-in-jupyter-vs-code">
+<h2>4 — Select the kernel in Jupyter / VS Code<a class="headerlink" href="#select-the-kernel-in-jupyter-vs-code" title="Link to this heading">¶</a></h2>
+<p>Open any notebook under <code class="docutils literal notranslate"><span class="pre">notebooks/</span></code> and select the <strong>ADRQ</strong> kernel. Each
+notebook’s header cell repeats this reminder.</p>
+</section>
+<section id="updating">
+<h2>Updating<a class="headerlink" href="#updating" title="Link to this heading">¶</a></h2>
+<div class="highlight-bash notranslate"><div class="highlight"><pre><span></span>git<span class="w"> </span>pull
+conda<span class="w"> </span>env<span class="w"> </span>update<span class="w"> </span>-f<span class="w"> </span>environments/ADRQ.yml<span class="w"> </span>--prune
+</pre></div>
+</div>
+</section>
+</section>
+
+
+            <div class="clearer"></div>
+          </div>
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="Main">
+        <div class="sphinxsidebarwrapper">
+            <p class="logo"><a href="index.html">
+              <img class="logo" src="_static/ADRQ_logo.png" alt="Logo of Auto Daily Rainfall QC"/>
+            </a></p>
+<h3><a href="index.html">Table of Contents</a></h3>
+<p class="caption" role="heading"><span class="caption-text">Getting started</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Installation</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#clone-the-repository">1 — Clone the repository</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#create-the-conda-environment">2 — Create the Conda environment</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#configure-the-project-paths">3 — Configure the project paths</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#select-the-kernel-in-jupyter-vs-code">4 — Select the kernel in Jupyter / VS Code</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#updating">Updating</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/overview.html">Workflow overview</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">The workflow</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="workflow/ingestion.html">Ingestion</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/matching.html">Matching</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/quality-control.html">Quality control</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/export.html">Export</a></li>
+<li class="toctree-l1"><a class="reference internal" href="workflow/analysis.html">Analysis</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Reference</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="reference/slurm.html">SLURM and HPC</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference/architecture.html">Architecture</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reference/scripts.html">Scripts and SLURM jobs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="reproduce.html">How to reproduce and extend</a></li>
+</ul>
+
+  <div role="note" aria-label="source link">
+    <h3>This Page</h3>
+    <ul class="this-page-menu">
+      <li><a href="_sources/installation.md.txt"
+            rel="nofollow">Show Source</a></li>
+    </ul>
+   </div>
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="related" role="navigation" aria-label="Related">
+      <h3>Navigation</h3>
+      <ul>
+        <li class="right" style="margin-right: 10px">
+          <a href="workflow/overview.html" title="Workflow overview"
+             >next</a></li>
+        <li class="right" >
+          <a href="index.html" title="Auto Daily Rainfall QC"
+             >previous</a> |</li>
+        <li class="nav-item nav-item-0"><a href="index.html">ADRQ</a> &#187;</li>
+        <li class="nav-item nav-item-this"><a href="">Installation</a></li> 
+      </ul>
+    </div>
+    <div class="footer" role="contentinfo">
+    </div>
+  </body>
+</html>
