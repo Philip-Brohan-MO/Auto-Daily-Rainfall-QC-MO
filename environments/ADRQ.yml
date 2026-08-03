@@ -9,6 +9,7 @@ dependencies:
   - cartopy  # Maps for diagnostic figures
   - black  # Code formatter
   - sphinx  # Documentation
+  - myst-parser  # Markdown sources for the Sphinx docs
 # Better JSON
   - json5  
 # Data storage in SQLite
