@@ -15,6 +15,13 @@ SEF is a simple tab-separated text format where **one file holds one variable
 from one station**. Here each file is a single *station-year* of daily rainfall:
 twelve header lines of metadata, a column header, then one line per observed day.
 
+## Only exact matches are exported
+
+Only station-years with an **exact** metadata match — a confirmed location name
+and coordinates — are written to SEF. Approximate matches (a centroid position
+inferred from the top-ranked candidates but no confirmed name) are **not**
+trustworthy enough to ship and are dropped entirely; they never reach a SEF file.
+
 ## Merging the ensemble's duplicates
 
 The ensemble frequently contains **duplicate** transcriptions of the same
