@@ -69,6 +69,20 @@ def _to_int(value: str) -> Optional[int]:
     return int(float(value))
 
 
+def _to_float_allsheets(value: str) -> Optional[float]:
+    """Parse a rainfall value from an ALLSHEETS sheet, mapping missing sentinels to None.
+
+    ALLSHEETS source sheets encode missing values as ``-999.00``. Rainfall is never
+    negative, so any negative value is treated as missing.
+    """
+    result = _to_float(value)
+    if result is None:
+        return None
+    if result < 0:
+        return None
+    return result
+
+
 def parse_combined_csv(path: Path, data_root: Path) -> ParsedCombinedFile:
     """Parse one combined rainfall CSV and return normalized station/month/annual rows."""
     rows: List[List[str]] = []
@@ -138,6 +152,91 @@ def parse_combined_csv(path: Path, data_root: Path) -> ParsedCombinedFile:
         longitude=longitude,
         latitude=latitude,
         elevation_ft=elevation_ft,
+        station_number=station_number,
+        source_path=str(relative),
+    )
+
+    return ParsedCombinedFile(station=station, monthly_rows=monthly_rows, annual_rows=annual_rows)
+
+
+def parse_allsheets_csv(path: Path, allsheets_root: Path) -> ParsedCombinedFile:
+    """Parse one ALLSHEETS source sheet into normalized station/month/annual rows.
+
+    ALLSHEETS sheets share the monthly layout of the combined RR CSVs (location on
+    row 0, year headings on row 5, January..December on rows 6..17, annual total on
+    row 18) but differ in important ways:
+
+    * Row 2 is blank -- there is no grid reference, longitude, latitude or elevation.
+    * The station number (row 3) is frequently empty.
+    * Sheets are grouped in decade folders (e.g. ``1860s``) rather than one folder
+      per station, and the same station may appear across several sheets. Each sheet
+      is therefore kept as a distinct record keyed by ``<decade>/<file stem>``.
+    * Missing values are encoded as ``-999.00`` and mapped to None.
+    * Two trailing rows (``Calc annual`` and ``Difference``) are ignored.
+    """
+    rows: List[List[str]] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.reader(handle)
+        rows = [row for row in reader]
+
+    if len(rows) < 18:
+        raise ParseError(f"Expected at least 18 rows, found {len(rows)}")
+
+    relative = path.relative_to(allsheets_root)
+    station_folder = relative.parent.name
+    station_file_name = path.stem
+    station_file_id = f"{station_folder}/{station_file_name}"
+
+    location_name = _cell(rows[0], 0) or None
+    station_number = _cell(rows[2], 1) or None
+
+    years_row = rows[4]
+    year_columns: List[Tuple[int, int]] = []
+    for col_idx in range(1, len(years_row)):
+        value = _cell(years_row, col_idx)
+        if not value:
+            continue
+        try:
+            year_columns.append((col_idx, int(value)))
+        except ValueError:
+            continue
+
+    if not year_columns:
+        raise ParseError("No year headings found in row 5")
+
+    monthly_rows: List[Tuple[str, int, int, float]] = []
+    for month_idx, month_name in enumerate(MONTH_NAMES, start=1):
+        csv_row_idx = 4 + month_idx
+        row = rows[csv_row_idx]
+        row_label = _cell(row, 0).lower()
+        if row_label and month_name.lower() not in row_label:
+            raise ParseError(
+                f"Unexpected row label '{_cell(row, 0)}' for {month_name} in row {csv_row_idx + 1}"
+            )
+
+        for col_idx, year in year_columns:
+            value = _to_float_allsheets(_cell(row, col_idx))
+            if value is None:
+                continue
+            monthly_rows.append((station_file_id, year, month_idx, value))
+
+    total_row = rows[17]
+    annual_rows: List[Tuple[str, int, float]] = []
+    for col_idx, year in year_columns:
+        value = _to_float_allsheets(_cell(total_row, col_idx))
+        if value is None:
+            continue
+        annual_rows.append((station_file_id, year, value))
+
+    station = StationMetadata(
+        station_file_id=station_file_id,
+        station_folder=station_folder,
+        station_file_name=station_file_name,
+        location_name=location_name,
+        grid_reference=None,
+        longitude=None,
+        latitude=None,
+        elevation_ft=None,
         station_number=station_number,
         source_path=str(relative),
     )

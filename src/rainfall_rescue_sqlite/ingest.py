@@ -47,6 +47,24 @@ def discover_combined_csv_files(data_root: Path) -> List[Path]:
     return candidates
 
 
+def discover_allsheets_csv_files(allsheets_root: Path) -> List[Path]:
+    """Find ALLSHEETS source-sheet CSV files under the ALLSHEETS directory.
+
+    Unlike :func:`discover_combined_csv_files`, this includes the ``TYRain_*`` source
+    sheets (which make up the whole of ALLSHEETS), organized in decade subfolders.
+    """
+    if not allsheets_root.exists():
+        raise FileNotFoundError(f"ALLSHEETS root not found: {allsheets_root}")
+
+    candidates = [
+        path
+        for path in allsheets_root.rglob("*.csv")
+        if not path.name.startswith("._")
+    ]
+    candidates.sort()
+    return candidates
+
+
 def _insert_station(conn: sqlite3.Connection, parsed: ParsedCombinedFile) -> None:
     station = parsed.station
     conn.execute(

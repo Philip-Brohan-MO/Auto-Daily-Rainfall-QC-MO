@@ -14,11 +14,13 @@ consensus value together with its QC verdicts.
 
 Design (locked with the maintainer)
 -----------------------------------
-* **Only exact matches are exported.** Approximate matches (a centroid position
-  inferred from the top-ranked candidates but no confirmed station name) are
-  *not* trustworthy enough to ship and are dropped entirely -- they never reach
-  a SEF file. Only files whose metadata carries ``match_type = 'exact'`` (with a
-  real location name / latitude / longitude) are considered here.
+* **Only located exact matches are exported.** Approximate matches (a centroid
+  position inferred from the top-ranked candidates but no confirmed station
+  name) are *not* trustworthy enough to ship and are dropped entirely -- they
+  never reach a SEF file. Files whose metadata carries ``match_type = 'exact'``
+  or ``match_type = 'exact_allsheets'`` (the latter is an ALLSHEETS name match
+  whose coordinates were filled in from ``LeftOverSites.csv``) with a real
+  location name / latitude / longitude are considered here.
 * **One SEF file per real station-year.** The ensemble frequently contains
   *duplicate* transcriptions of the same station-year (several ``file_id`` values
   that all matched the same real station in the same year). These duplicates are
@@ -232,11 +234,12 @@ def _build_query(
 ) -> str:
     """Build the streamed join of consensus + located metadata + QC verdicts.
 
-    Only exact matches are selected (``match_type = 'exact'``); approximate
+    Only located matches are selected (``match_type IN ('exact',
+    'exact_allsheets')`` with non-null coordinates); approximate
     matches are filtered out and never exported. The result is ordered by
     ``(matched_year, group_key, month, day_of_month, file_id)`` so that every
     duplicate of a real station-year arrives as one contiguous block ready to be
-    merged. ``group_key`` collapses exact matches that share a location and year.
+    merged. ``group_key`` collapses matches that share a location and year.
     """
     consensus_glob = _glob_sql(consensus_root / "daily_consensus")
     metadata_glob = _glob_sql(comparison_root / "ensemble_metadata")
@@ -279,7 +282,8 @@ def _build_query(
     # are merged. (Approximate matches are filtered out by the meta CTE below,
     # so the fallback file-keyed branch only guards exact rows lacking a name.)
     group_key_expr = (
-        "CASE WHEN m.match_type = 'exact' AND m.matched_location_name IS NOT NULL\n"
+        "CASE WHEN m.match_type IN ('exact', 'exact_allsheets')"
+        "      AND m.matched_location_name IS NOT NULL\n"
         "     THEN 'loc:' || m.matched_location_name || '@'\n"
         "          || CAST(round(m.matched_latitude, 4) AS VARCHAR) || ','\n"
         "          || CAST(round(m.matched_longitude, 4) AS VARCHAR)\n"
@@ -293,7 +297,7 @@ def _build_query(
                    matched_latitude, matched_longitude, matched_elevation_ft,
                    matched_year, match_type
             FROM read_parquet('{metadata_glob}')
-            WHERE match_type = 'exact'
+            WHERE match_type IN ('exact', 'exact_allsheets')
               AND matched_latitude IS NOT NULL
               AND matched_longitude IS NOT NULL
               AND match_source_session_id = (

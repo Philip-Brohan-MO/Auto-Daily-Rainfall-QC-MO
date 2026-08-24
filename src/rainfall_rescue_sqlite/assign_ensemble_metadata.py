@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -14,7 +15,7 @@ import duckdb
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .ingest import default_db_path
+from .ingest import default_db_path, default_rainfall_rescue_root
 
 # An exact match additionally requires that the ensemble (transcription)
 # consensus vector is not mostly empty: no more than this many of its 12
@@ -596,5 +597,250 @@ def assign_ensemble_metadata_parquet(
         total_ensemble_files=total_files,
         exact_matches=exact_count,
         approximate_matches=approx_count,
+        unmatched=unmatched,
+    )
+
+
+@dataclass(frozen=True)
+class CombineResult:
+    """Result summary of combining DATA and ALLSHEETS metadata assignments."""
+
+    output_path: Path
+    session_id: int
+    total_ensemble_files: int
+    data_exact: int
+    allsheets_filled: int
+    allsheets_with_coords: int
+    data_approximate: int
+    unmatched: int
+
+
+def _normalize_site_name(name: Optional[str]) -> str:
+    """Uppercase and collapse runs of non-alphanumerics to a single space.
+
+    Used to match ALLSHEETS ``matched_location_name`` values (space-separated)
+    against the punctuation-varied ``Site name`` column in ``LeftOverSites.csv``.
+    """
+    if not name:
+        return ""
+    return re.sub(r"[^A-Z0-9]+", " ", name.upper()).strip()
+
+
+def _load_leftover_site_coords(
+    csv_path: Path,
+) -> Dict[str, Tuple[float, float, Optional[float]]]:
+    """Load ``{normalised_name: (lat, lon, elevation_ft)}`` from LeftOverSites.csv.
+
+    Only rows with usable latitude and longitude are kept, and only names that
+    resolve to a single, unambiguous coordinate pair (names that map to two
+    different locations are dropped rather than guessed).
+    """
+    resolved = str(Path(csv_path).resolve())
+    conn = duckdb.connect()
+    try:
+        rows = conn.execute(
+            f"""
+            WITH raw AS (
+                SELECT
+                    TRIM(REGEXP_REPLACE(UPPER("Site name"), '[^A-Z0-9]+', ' ', 'g')) AS nkey,
+                    TRY_CAST("Latitude" AS DOUBLE) AS lat,
+                    TRY_CAST("Longitude" AS DOUBLE) AS lon,
+                    TRY_CAST("Elevation (ft)" AS DOUBLE) AS elev
+                FROM read_csv_auto('{resolved}', header=true, quote='"', all_varchar=true)
+            )
+            SELECT nkey,
+                   any_value(lat) AS lat,
+                   any_value(lon) AS lon,
+                   any_value(elev) AS elev
+            FROM raw
+            WHERE nkey <> '' AND lat IS NOT NULL AND lon IS NOT NULL
+            GROUP BY nkey
+            HAVING COUNT(DISTINCT (round(lat, 5) || ',' || round(lon, 5))) = 1
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return {r[0]: (r[1], r[2], r[3]) for r in rows}
+
+
+def _next_metadata_session_id(ensemble_metadata_dir: Path) -> int:
+    """Return one past the highest ``session_NNNNNN.parquet`` id in a directory."""
+    if not ensemble_metadata_dir.exists():
+        return 1
+    ids = []
+    for path in ensemble_metadata_dir.glob("session_*.parquet"):
+        try:
+            ids.append(int(path.stem.split("_")[1]))
+        except (IndexError, ValueError):
+            continue
+    return (max(ids) + 1) if ids else 1
+
+
+def combine_metadata_assignments_parquet(
+    *,
+    data_metadata_path: Path,
+    allsheets_metadata_path: Path,
+    comparison_root: Path,
+    allsheets_match_type: str = "exact_allsheets",
+    leftover_sites_csv: Optional[Path] = None,
+    batch_rows: int = 100_000,
+) -> CombineResult:
+    """Combine DATA and ALLSHEETS metadata assignments into one final session.
+
+    Writes a fresh ``ensemble_metadata/session_XXXXXX.parquet`` under
+    ``comparison_root`` (with a session id one past the highest already present)
+    so downstream code — which reads the latest ``match_source_session_id`` —
+    automatically picks up the combined result.
+
+    Per ensemble file the assignment is chosen by priority:
+
+    1. **DATA exact** — kept exactly as the DATA pass produced it (location,
+       year, latitude, longitude, elevation; ``match_type = 'exact'``).
+    2. **ALLSHEETS exact** — for files without a DATA exact match, the ALLSHEETS
+       pass supplies ``matched_location_name`` and ``matched_year``, tagged
+       ``match_type = allsheets_match_type`` (default ``'exact_allsheets'``).
+       ALLSHEETS sheets carry no coordinates of their own, so where the
+       normalised location name is found in ``LeftOverSites.csv`` the matching
+       latitude/longitude/elevation are filled in (making the record
+       SEF-exportable); otherwise the coordinates stay NULL.
+    3. **DATA approximate** — kept if neither exact match applies.
+    4. Otherwise the file stays unmatched (all metadata NULL).
+
+    ``leftover_sites_csv`` defaults to ``LeftOverSites.csv`` under the Rainfall
+    Rescue root (``$PDIR/Rainfall-Rescue``) when present; pass an explicit path
+    to override, or a non-existent path to skip coordinate enrichment.
+    """
+    data_glob = str(Path(data_metadata_path).resolve())
+    allsheets_glob = str(Path(allsheets_metadata_path).resolve())
+
+    if leftover_sites_csv is None:
+        candidate = default_rainfall_rescue_root() / "LeftOverSites.csv"
+        leftover_sites_csv = candidate if candidate.exists() else None
+    site_coords = (
+        _load_leftover_site_coords(leftover_sites_csv)
+        if leftover_sites_csv is not None and Path(leftover_sites_csv).exists()
+        else {}
+    )
+
+    out_dir = comparison_root / "ensemble_metadata"
+    session_id = _next_metadata_session_id(out_dir)
+    out_path = (out_dir / f"session_{session_id:06d}.parquet").resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    conn = duckdb.connect()
+
+    join_sql = f"""
+        SELECT
+            d.file_id AS file_id,
+            d.file_name AS file_name,
+            d.match_type AS d_type,
+            d.matched_location_name AS d_loc,
+            d.matched_year AS d_year,
+            d.matched_latitude AS d_lat,
+            d.matched_longitude AS d_lon,
+            d.matched_elevation_ft AS d_elev,
+            a.match_type AS a_type,
+            a.matched_location_name AS a_loc,
+            a.matched_year AS a_year
+        FROM read_parquet('{data_glob}') d
+        LEFT JOIN read_parquet('{allsheets_glob}') a
+          ON a.file_id = d.file_id
+        ORDER BY d.file_id
+    """
+
+    data_exact = 0
+    allsheets_filled = 0
+    allsheets_with_coords = 0
+    data_approx = 0
+
+    writer = pq.ParquetWriter(out_path, ENSEMBLE_METADATA_SCHEMA, compression="zstd")
+    buffer: list = []
+    try:
+        reader = conn.execute(join_sql).fetch_record_batch(batch_rows)
+        for batch in reader:
+            rows = batch.to_pylist()
+            for r in rows:
+                d_type = r["d_type"]
+                a_type = r["a_type"]
+                if d_type == "exact":
+                    row = {
+                        "matched_location_name": r["d_loc"],
+                        "matched_year": r["d_year"],
+                        "matched_latitude": r["d_lat"],
+                        "matched_longitude": r["d_lon"],
+                        "matched_elevation_ft": r["d_elev"],
+                        "match_type": "exact",
+                        "match_source_session_id": session_id,
+                    }
+                    data_exact += 1
+                elif a_type == "exact":
+                    lat = lon = elev = None
+                    if site_coords:
+                        hit = site_coords.get(_normalize_site_name(r["a_loc"]))
+                        if hit is not None:
+                            lat, lon, elev = hit
+                            allsheets_with_coords += 1
+                    row = {
+                        "matched_location_name": r["a_loc"],
+                        "matched_year": r["a_year"],
+                        "matched_latitude": lat,
+                        "matched_longitude": lon,
+                        "matched_elevation_ft": elev,
+                        "match_type": allsheets_match_type,
+                        "match_source_session_id": session_id,
+                    }
+                    allsheets_filled += 1
+                elif d_type == "approximate":
+                    row = {
+                        "matched_location_name": r["d_loc"],
+                        "matched_year": r["d_year"],
+                        "matched_latitude": r["d_lat"],
+                        "matched_longitude": r["d_lon"],
+                        "matched_elevation_ft": r["d_elev"],
+                        "match_type": "approximate",
+                        "match_source_session_id": session_id,
+                    }
+                    data_approx += 1
+                else:
+                    row = {
+                        "matched_location_name": None,
+                        "matched_year": None,
+                        "matched_latitude": None,
+                        "matched_longitude": None,
+                        "matched_elevation_ft": None,
+                        "match_type": None,
+                        "match_source_session_id": None,
+                    }
+                row["file_id"] = r["file_id"]
+                row["file_name"] = r["file_name"]
+                buffer.append(row)
+                if len(buffer) >= 50_000:
+                    writer.write_table(
+                        pa.Table.from_pylist(buffer, schema=ENSEMBLE_METADATA_SCHEMA)
+                    )
+                    buffer.clear()
+        if buffer:
+            writer.write_table(
+                pa.Table.from_pylist(buffer, schema=ENSEMBLE_METADATA_SCHEMA)
+            )
+    finally:
+        writer.close()
+        total_files = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM read_parquet('{out_path}')"
+            ).fetchone()[0]
+        )
+        conn.close()
+
+    unmatched = total_files - data_exact - allsheets_filled - data_approx
+
+    return CombineResult(
+        output_path=out_path,
+        session_id=session_id,
+        total_ensemble_files=total_files,
+        data_exact=data_exact,
+        allsheets_filled=allsheets_filled,
+        allsheets_with_coords=allsheets_with_coords,
+        data_approximate=data_approx,
         unmatched=unmatched,
     )
