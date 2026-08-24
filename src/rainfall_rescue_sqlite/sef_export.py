@@ -14,17 +14,21 @@ consensus value together with its QC verdicts.
 
 Design (locked with the maintainer)
 -----------------------------------
+* **Only located exact matches are exported.** Approximate matches (a centroid
+  position inferred from the top-ranked candidates but no confirmed station
+  name) are *not* trustworthy enough to ship and are dropped entirely -- they
+  never reach a SEF file. Files whose metadata carries ``match_type = 'exact'``
+  or ``match_type = 'exact_allsheets'`` (the latter is an ALLSHEETS name match
+  whose coordinates were filled in from ``LeftOverSites.csv``) with a real
+  location name / latitude / longitude are considered here.
 * **One SEF file per real station-year.** The ensemble frequently contains
   *duplicate* transcriptions of the same station-year (several ``file_id`` values
   that all matched the same real station in the same year). These duplicates are
   merged into a single SEF file: for every calendar day the value is taken from
   the duplicate with the best QC verdict (see the QC ladder below), so no day is
-  ever dropped. **Only exact matches are merged** -- they carry a real location
-  name / latitude / longitude and are grouped by
+  ever dropped. Exact matches are grouped by
   ``(matched_location_name, matched_latitude, matched_longitude, matched_year)``.
-  Approximate matches (coordinates but no confirmed name) are never merged; each
-  is written as its own file, exactly as before. Files still land under
-  ``<output_root>/tsv/<matched_year>/<ID>.tsv``.
+  Files land under ``<output_root>/tsv/<matched_year>/<ID>.tsv``.
 * **QC-aware day selection.** When several duplicates cover the same day, the
   value is chosen by this preference ladder (best first): ``qc1=pass`` >
   ``qc1=fail & qc2=pass`` > ``qc1=review`` > ``qc1=fail & qc2=indeterminate`` >
@@ -32,8 +36,8 @@ Design (locked with the maintainer)
   ID is the *representative* source (the duplicate contributing the most
   ``qc1=pass`` days, tie-broken by lowest ``file_id``); the file-level ``Meta``
   lists every merged source and each observation records the source it came from.
-* **All located observations** are exported (any station with coordinates, i.e.
-  an exact or approximate match). The QC verdict travels in each observation's
+* **All exact-matched observations** are exported (every day of an exact-matched
+  station-year). The QC verdict travels in each observation's
   per-observation ``Meta`` column as ``qc1=<pass|review|fail>``,
   ``qc2=<pass|fail|indeterminate|NA>`` (``qc2`` only exists for the QC1-fail days
   re-examined by the secondary check) and ``source=<specifier>`` (which duplicate
@@ -230,11 +234,12 @@ def _build_query(
 ) -> str:
     """Build the streamed join of consensus + located metadata + QC verdicts.
 
-    The result is ordered by ``(matched_year, group_key, month, day_of_month,
-    file_id)`` so that every duplicate of a real station-year arrives as one
-    contiguous block ready to be merged. ``group_key`` collapses exact matches
-    that share a location and year; approximate matches key on their own
-    ``file_id`` so they are never merged.
+    Only located matches are selected (``match_type IN ('exact',
+    'exact_allsheets')`` with non-null coordinates); approximate
+    matches are filtered out and never exported. The result is ordered by
+    ``(matched_year, group_key, month, day_of_month, file_id)`` so that every
+    duplicate of a real station-year arrives as one contiguous block ready to be
+    merged. ``group_key`` collapses matches that share a location and year.
     """
     consensus_glob = _glob_sql(consensus_root / "daily_consensus")
     metadata_glob = _glob_sql(comparison_root / "ensemble_metadata")
@@ -274,9 +279,11 @@ def _build_query(
         qc2_join = ""
 
     # Exact matches that share a location and year are one real station-year and
-    # are merged; approximate matches key on their own file_id (never merged).
+    # are merged. (Approximate matches are filtered out by the meta CTE below,
+    # so the fallback file-keyed branch only guards exact rows lacking a name.)
     group_key_expr = (
-        "CASE WHEN m.match_type = 'exact' AND m.matched_location_name IS NOT NULL\n"
+        "CASE WHEN m.match_type IN ('exact', 'exact_allsheets')"
+        "      AND m.matched_location_name IS NOT NULL\n"
         "     THEN 'loc:' || m.matched_location_name || '@'\n"
         "          || CAST(round(m.matched_latitude, 4) AS VARCHAR) || ','\n"
         "          || CAST(round(m.matched_longitude, 4) AS VARCHAR)\n"
@@ -290,7 +297,8 @@ def _build_query(
                    matched_latitude, matched_longitude, matched_elevation_ft,
                    matched_year, match_type
             FROM read_parquet('{metadata_glob}')
-            WHERE matched_latitude IS NOT NULL
+            WHERE match_type IN ('exact', 'exact_allsheets')
+              AND matched_latitude IS NOT NULL
               AND matched_longitude IS NOT NULL
               AND match_source_session_id = (
                   SELECT MAX(match_source_session_id)
@@ -339,9 +347,9 @@ def _merge_group(group_rows: List[Dict[str, object]]):
     """Merge the duplicate transcriptions of one real station-year.
 
     ``group_rows`` are all the observation rows that share a ``group_key`` (and
-    year): for an exact match, every duplicate of that location-year; for an
-    approximate match, the single file. For each calendar day the value is taken
-    from the duplicate with the best QC verdict (``_qc_rank``), ties broken by the
+    year): every duplicate of that exact-matched location-year. For each calendar
+    day the value is taken from the duplicate with the best QC verdict
+    (``_qc_rank``), ties broken by the
     lowest ``file_id``. Returns ``(station, observations)`` where ``station``
     carries the representative source's metadata plus the list of every merged
     source, and each observation records the ``source`` it was taken from.

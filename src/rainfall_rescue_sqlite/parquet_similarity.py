@@ -194,6 +194,18 @@ def default_comparison_parquet_root() -> Path:
     return Path(pdir) / "monthly_similarity_parquet"
 
 
+def default_allsheets_comparison_parquet_root() -> Path:
+    """Default comparison root for the ALLSHEETS residual-matching pass."""
+    from os import environ
+
+    pdir = environ.get("PDIR")
+    if not pdir:
+        raise EnvironmentError(
+            "PDIR is not set; pass allsheets_comparison_root explicitly"
+        )
+    return Path(pdir) / "monthly_similarity_allsheets_parquet"
+
+
 def _finalize_rr_vector(payload: Dict[str, object]) -> RRVector:
     months = payload["months"]  # type: ignore[index]
     raw_vector = [_coerce_numeric(months[m]) for m in MONTHS]  # type: ignore[index]
@@ -580,6 +592,123 @@ def build_comparison_vectors_parquet(
 
     return BuildResult(
         comparison_root=comparison_root,
+        rr_vectors=rr_count,
+        ensemble_vectors=ensemble_count,
+    )
+
+
+def build_allsheets_comparison_vectors_parquet(
+    *,
+    allsheets_dataset_root: Path,
+    source_comparison_root: Path,
+    allsheets_comparison_root: Path,
+    data_metadata_path: Path,
+    overwrite: bool = True,
+) -> BuildResult:
+    """Build the comparison vectors for the ALLSHEETS residual-matching pass.
+
+    This is the second-pass counterpart to :func:`build_comparison_vectors_parquet`.
+    The candidate side (``rr_monthly_vectors``) is rebuilt from the ALLSHEETS
+    Parquet dataset (which shares the Rainfall Rescue schema but carries no
+    latitude/longitude/elevation), while the query side is *reused* from an
+    existing DATA comparison root, restricted to the **residual** ensemble files
+    — those the DATA pass could not match exactly.
+
+    ``data_metadata_path`` is the ``ensemble_metadata`` Parquet written by
+    :func:`assign_ensemble_metadata_parquet` for the DATA pass; residual files
+    are those whose ``match_type`` is anything other than ``'exact'`` (i.e.
+    ``'approximate'`` or unmatched/NULL).
+    """
+    if allsheets_comparison_root.exists() and overwrite:
+        import shutil
+
+        shutil.rmtree(allsheets_comparison_root)
+    allsheets_comparison_root.mkdir(parents=True, exist_ok=True)
+
+    # Candidate vectors: rebuilt from the ALLSHEETS dataset (lat/lon/elev NULL).
+    rr_count = _write_vectors_streaming(
+        allsheets_comparison_root / "rr_monthly_vectors" / "part_000000.parquet",
+        RR_VECTOR_SCHEMA,
+        (_rr_row_dict(v) for v in _iter_rr_vectors(allsheets_dataset_root)),
+    )
+
+    # Query vectors + member values: reuse the DATA comparison root, but keep
+    # only the residual (non-exact) ensemble files.
+    meta_glob = str(Path(data_metadata_path).resolve())
+    residual_files_sql = (
+        f"SELECT file_id FROM read_parquet('{meta_glob}') "
+        f"WHERE match_type IS DISTINCT FROM 'exact'"
+    )
+
+    conn = duckdb.connect()
+    _configure_duckdb(conn)
+    try:
+        cons_out = (
+            allsheets_comparison_root
+            / "ensemble_consensus_vectors"
+            / "part_000000.parquet"
+        ).resolve()
+        cons_out.parent.mkdir(parents=True, exist_ok=True)
+        conn.execute(
+            f"""
+            COPY (
+                SELECT *
+                FROM read_parquet('{_glob_sql(source_comparison_root / 'ensemble_consensus_vectors')}')
+                WHERE file_id IN ({residual_files_sql})
+            ) TO '{cons_out}' (FORMAT PARQUET, COMPRESSION ZSTD)
+            """
+        )
+        ensemble_count = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM read_parquet('{cons_out}')"
+            ).fetchone()[0]
+        )
+
+        member_out = (
+            allsheets_comparison_root
+            / "ensemble_member_monthly_values"
+            / "part_000000.parquet"
+        ).resolve()
+        member_out.parent.mkdir(parents=True, exist_ok=True)
+        conn.execute(
+            f"""
+            COPY (
+                SELECT *
+                FROM read_parquet('{_glob_sql(source_comparison_root / 'ensemble_member_monthly_values')}')
+                WHERE ensemble_vector_id IN (
+                    SELECT 'ensemble_file::' || CAST(file_id AS VARCHAR)
+                    FROM read_parquet('{meta_glob}')
+                    WHERE match_type IS DISTINCT FROM 'exact'
+                )
+            ) TO '{member_out}' (FORMAT PARQUET, COMPRESSION ZSTD)
+            """
+        )
+        member_rows = int(
+            conn.execute(
+                f"SELECT COUNT(*) FROM read_parquet('{member_out}')"
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+    _write_json(
+        allsheets_comparison_root / "_metadata" / "build_run.json",
+        {
+            "started_at": _utc_now(),
+            "completed_at": _utc_now(),
+            "allsheets_dataset_root": str(allsheets_dataset_root),
+            "source_comparison_root": str(source_comparison_root),
+            "allsheets_comparison_root": str(allsheets_comparison_root),
+            "data_metadata_path": str(data_metadata_path),
+            "rr_vectors": rr_count,
+            "residual_ensemble_vectors": ensemble_count,
+            "residual_member_rows": member_rows,
+            "status": "success",
+        },
+    )
+
+    return BuildResult(
+        comparison_root=allsheets_comparison_root,
         rr_vectors=rr_count,
         ensemble_vectors=ensemble_count,
     )

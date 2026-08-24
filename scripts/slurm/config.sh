@@ -140,6 +140,45 @@ export QC_MERGE_CORES="${QC_MERGE_CORES:-1}"
 export QC_MERGE_MEM_MB="${QC_MERGE_MEM_MB:-24000}"
 export QC_MERGE_TIME_MIN="${QC_MERGE_TIME_MIN:-180}"
 
+# --- Transcription-source QC (bad sources + duplicate detection) ---------
+# Two dependent stages (array -> merge), independent of the RR match / metadata:
+#   1. array : each shard computes per-file QC metrics (rainfall-day counts +
+#      the 372-value daily consensus vector) for its CONTIGUOUS file_id slice
+#      and writes tqc_shard_XXXXX.parquet. Sharding by file_id lets DuckDB prune
+#      row groups so the heavy daily aggregation stays memory-bounded per task.
+#   2. merge : flags bad sources (nonzero_days < TQC_MIN_NONZERO_DAYS) and
+#      detects duplicate sources purely from content -- LSH banding over the
+#      rounded monthly sums to block candidates, then day-level agreement over
+#      the full 372 daily values -- then writes the sessioned outputs under
+#      TQC_ROOT.
+# Submit with submit_transcription_qc.sh.
+export TQC_ROOT="${TQC_ROOT:-${PDIR}/transcription_qc_parquet}"
+export TQC_SHARD_DIR="${TQC_SHARD_DIR:-${PDIR}/transcription_qc_shards}"
+export TQC_NUM_SHARDS="${TQC_NUM_SHARDS:-100}"
+# Upper bound on file_id (used to compute each shard's slice). Refresh with the
+# max file_id from the ensemble dataset after a new ingest.
+export TQC_TOTAL_FILE_IDS="${TQC_TOTAL_FILE_IDS:-680000}"
+
+# Bad-source flag: a source is bad when fewer than this many of its 372 day-cells
+# hold real rainfall (non-null and > 0). Pick from the nonzero_days distribution
+# in Daily_transcriptions_ingest.
+export TQC_MIN_NONZERO_DAYS="${TQC_MIN_NONZERO_DAYS:-20}"
+
+# Duplicate-detection tunables (content-only, day-level scoring).
+export TQC_ROUND_DECIMALS="${TQC_ROUND_DECIMALS:-1}"
+export TQC_MATCH_TOL="${TQC_MATCH_TOL:-0.2}"
+export TQC_MIN_OVERLAP_DAYS="${TQC_MIN_OVERLAP_DAYS:-60}"
+export TQC_MIN_AGREEMENT="${TQC_MIN_AGREEMENT:-0.9}"
+export TQC_MAX_BLOCK="${TQC_MAX_BLOCK:-2000}"
+
+export TQC_CORES="${TQC_CORES:-1}"
+export TQC_MEM_MB="${TQC_MEM_MB:-8000}"
+export TQC_TIME_MIN="${TQC_TIME_MIN:-30}"
+
+export TQC_MERGE_CORES="${TQC_MERGE_CORES:-2}"
+export TQC_MERGE_MEM_MB="${TQC_MERGE_MEM_MB:-24000}"
+export TQC_MERGE_TIME_MIN="${TQC_MERGE_TIME_MIN:-120}"
+
 # --- Daily-consensus precompute (prerequisite for regional stats) ---------
 # Compute median(rainfall) per (file_id, month, day_of_month) ONCE, sharded by
 # CONTIGUOUS file_id range. Contiguous ranges let DuckDB prune ensemble_daily_
@@ -288,6 +327,50 @@ export SEFSTATS_SEF_ROOT="${SEFSTATS_SEF_ROOT:-${SEF_OUTPUT_ROOT}}"
 export SEFSTATS_CORES="${SEFSTATS_CORES:-1}"
 export SEFSTATS_MEM_MB="${SEFSTATS_MEM_MB:-8000}"
 export SEFSTATS_TIME_MIN="${SEFSTATS_TIME_MIN:-30}"
+
+# --- ALLSHEETS residual matching (second matching pass) ------------------
+# After the DATA pipeline (submit_all.sh) and its metadata assignment, every
+# ensemble record WITHOUT an exact DATA match is re-run through the same matching
+# algorithm against the ALLSHEETS transcriptions (the individual source sheets,
+# ingested to their own Parquet store). ALLSHEETS sheets carry no coordinates, so
+# a match supplies location name + year only (tagged match_type=exact_allsheets).
+# Stages mirror the DATA pipeline: build residual vectors -> match array ->
+# merge -> finalise (assign + combine into a new final ensemble_metadata session
+# under COMPARISON_PARQUET_ROOT). Submit with submit_allsheets.sh.
+export ALLSHEETS_PARQUET_ROOT="${ALLSHEETS_PARQUET_ROOT:-${PDIR}/Rainfall-Rescue/rainfall_rescue_allsheets_parquet}"
+export ALLSHEETS_COMPARISON_PARQUET_ROOT="${ALLSHEETS_COMPARISON_PARQUET_ROOT:-${PDIR}/monthly_similarity_allsheets_parquet}"
+export ALLSHEETS_SIMILARITY_SHARD_DIR="${ALLSHEETS_SIMILARITY_SHARD_DIR:-${PDIR}/similarity_shards_allsheets_parquet}"
+# DATA metadata parquet consumed as the residual filter + combine source.
+# Empty = auto-resolve the latest ensemble_metadata/session_*.parquet in
+# COMPARISON_PARQUET_ROOT (produced by the DATA metadata assignment).
+export ALLSHEETS_DATA_METADATA="${ALLSHEETS_DATA_METADATA:-}"
+export ALLSHEETS_MATCH_TYPE="${ALLSHEETS_MATCH_TYPE:-exact_allsheets}"
+# CSV used to fill lat/lon/elevation for ALLSHEETS name matches so those records
+# become SEF-exportable. Empty = auto-resolve LeftOverSites.csv under the
+# Rainfall Rescue root (${PDIR}/Rainfall-Rescue).
+export ALLSHEETS_LEFTOVER_CSV="${ALLSHEETS_LEFTOVER_CSV:-}"
+
+# Number of ALLSHEETS match array shards (falls back to NUM_SHARDS).
+export ALLSHEETS_NUM_SHARDS="${ALLSHEETS_NUM_SHARDS:-${NUM_SHARDS}}"
+
+# Per-stage resources. Build rebuilds ~449k candidate vectors from the ALLSHEETS
+# dataset and copies the residual member values via DuckDB; match holds the
+# larger ALLSHEETS candidate matrix in RAM; finalise streams every ensemble file.
+export ALLSHEETS_BUILD_CORES="${ALLSHEETS_BUILD_CORES:-2}"
+export ALLSHEETS_BUILD_MEM_MB="${ALLSHEETS_BUILD_MEM_MB:-16000}"
+export ALLSHEETS_BUILD_TIME_MIN="${ALLSHEETS_BUILD_TIME_MIN:-120}"
+
+export ALLSHEETS_MATCH_CORES="${ALLSHEETS_MATCH_CORES:-2}"
+export ALLSHEETS_MATCH_MEM_MB="${ALLSHEETS_MATCH_MEM_MB:-6000}"
+export ALLSHEETS_MATCH_TIME_MIN="${ALLSHEETS_MATCH_TIME_MIN:-60}"
+
+export ALLSHEETS_MERGE_CORES="${ALLSHEETS_MERGE_CORES:-1}"
+export ALLSHEETS_MERGE_MEM_MB="${ALLSHEETS_MERGE_MEM_MB:-8000}"
+export ALLSHEETS_MERGE_TIME_MIN="${ALLSHEETS_MERGE_TIME_MIN:-40}"
+
+export ALLSHEETS_FINAL_CORES="${ALLSHEETS_FINAL_CORES:-2}"
+export ALLSHEETS_FINAL_MEM_MB="${ALLSHEETS_FINAL_MEM_MB:-16000}"
+export ALLSHEETS_FINAL_TIME_MIN="${ALLSHEETS_FINAL_TIME_MIN:-60}"
 
 # --- Python runner -------------------------------------------------------
 export PYTHONPATH="${REPO_ROOT}:${PYTHONPATH}"

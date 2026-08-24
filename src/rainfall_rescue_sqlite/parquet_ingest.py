@@ -20,8 +20,12 @@ import pyarrow.parquet as pq
 
 from .ensemble_ingest import default_ensemble_root, discover_ensemble_json_files
 from .ensemble_parser import EnsembleParseError, parse_ensemble_json
-from .ingest import default_rainfall_rescue_root, discover_combined_csv_files
-from .parser import ParseError, parse_combined_csv
+from .ingest import (
+    default_rainfall_rescue_root,
+    discover_allsheets_csv_files,
+    discover_combined_csv_files,
+)
+from .parser import ParseError, parse_allsheets_csv, parse_combined_csv
 
 
 @dataclass(frozen=True)
@@ -147,6 +151,187 @@ def ingest_rainfall_rescue_to_parquet(
     for idx, csv_path in enumerate(csv_paths, start=1):
         try:
             parsed = parse_combined_csv(csv_path, source_root)
+            s = parsed.station
+            stations_rows.append(
+                {
+                    "station_file_id": s.station_file_id,
+                    "station_folder": s.station_folder,
+                    "station_file_name": s.station_file_name,
+                    "location_name": s.location_name,
+                    "grid_reference": s.grid_reference,
+                    "longitude": s.longitude,
+                    "latitude": s.latitude,
+                    "elevation_ft": s.elevation_ft,
+                    "station_number": s.station_number,
+                    "source_path": s.source_path,
+                }
+            )
+            monthly_rows.extend(
+                {
+                    "station_file_id": station_file_id,
+                    "year": year,
+                    "month": month,
+                    "rainfall_in": rainfall_in,
+                }
+                for (station_file_id, year, month, rainfall_in) in parsed.monthly_rows
+            )
+            annual_rows.extend(
+                {
+                    "station_file_id": station_file_id,
+                    "year": year,
+                    "total_in": total_in,
+                }
+                for (station_file_id, year, total_in) in parsed.annual_rows
+            )
+            files_ingested += 1
+            monthly_n += len(parsed.monthly_rows)
+            annual_n += len(parsed.annual_rows)
+        except (ParseError, ValueError) as exc:
+            errors += 1
+            error_rows.append(
+                {
+                    "source_path": str(csv_path.relative_to(rainfall_rescue_root)),
+                    "error_message": str(exc),
+                }
+            )
+
+        if idx % flush_every_files == 0:
+            part_stations = _append_table(
+                table_dir=dataset_root / "stations",
+                part_prefix="part",
+                part_index=part_stations,
+                schema=RR_STATIONS_SCHEMA,
+                rows=stations_rows,
+            )
+            part_monthly = _append_table(
+                table_dir=dataset_root / "monthly_rainfall",
+                part_prefix="part",
+                part_index=part_monthly,
+                schema=RR_MONTHLY_SCHEMA,
+                rows=monthly_rows,
+            )
+            part_annual = _append_table(
+                table_dir=dataset_root / "annual_totals",
+                part_prefix="part",
+                part_index=part_annual,
+                schema=RR_ANNUAL_SCHEMA,
+                rows=annual_rows,
+            )
+            part_errors = _append_table(
+                table_dir=dataset_root / "ingestion_file_errors",
+                part_prefix="part",
+                part_index=part_errors,
+                schema=RR_ERRORS_SCHEMA,
+                rows=error_rows,
+            )
+            stations_rows.clear()
+            monthly_rows.clear()
+            annual_rows.clear()
+            error_rows.clear()
+
+    part_stations = _append_table(
+        table_dir=dataset_root / "stations",
+        part_prefix="part",
+        part_index=part_stations,
+        schema=RR_STATIONS_SCHEMA,
+        rows=stations_rows,
+    )
+    part_monthly = _append_table(
+        table_dir=dataset_root / "monthly_rainfall",
+        part_prefix="part",
+        part_index=part_monthly,
+        schema=RR_MONTHLY_SCHEMA,
+        rows=monthly_rows,
+    )
+    part_annual = _append_table(
+        table_dir=dataset_root / "annual_totals",
+        part_prefix="part",
+        part_index=part_annual,
+        schema=RR_ANNUAL_SCHEMA,
+        rows=annual_rows,
+    )
+    part_errors = _append_table(
+        table_dir=dataset_root / "ingestion_file_errors",
+        part_prefix="part",
+        part_index=part_errors,
+        schema=RR_ERRORS_SCHEMA,
+        rows=error_rows,
+    )
+
+    run_payload = {
+        "started_at": _utc_now(),
+        "completed_at": _utc_now(),
+        "source_root": str(source_root),
+        "dataset_root": str(dataset_root),
+        "files_discovered": len(csv_paths),
+        "files_ingested": files_ingested,
+        "station_rows": files_ingested,
+        "monthly_rows": monthly_n,
+        "annual_rows": annual_n,
+        "errors": errors,
+        "status": "success" if errors == 0 else "completed_with_errors",
+        "part_counts": {
+            "stations": part_stations,
+            "monthly_rainfall": part_monthly,
+            "annual_totals": part_annual,
+            "ingestion_file_errors": part_errors,
+        },
+    }
+    _write_json(dataset_root / "_metadata" / "ingestion_run.json", run_payload)
+
+    return ParquetIngestionResult(
+        dataset_root=dataset_root,
+        source_root=source_root,
+        files_discovered=len(csv_paths),
+        files_ingested=files_ingested,
+        daily_rows=monthly_n,
+        total_rows=annual_n,
+        errors=errors,
+    )
+
+
+def ingest_allsheets_to_parquet(
+    *,
+    rainfall_rescue_root: Path,
+    dataset_root: Path,
+    max_files: Optional[int] = None,
+    overwrite: bool = False,
+    flush_every_files: int = 500,
+) -> ParquetIngestionResult:
+    """Build ALLSHEETS Parquet datasets from source-sheet CSV files.
+
+    ALLSHEETS holds the individual transcribed source sheets (grouped by decade)
+    that back the Rainfall Rescue monthly data. Each sheet is ingested as a distinct
+    record so the additional monthly series can be compared against the combined
+    Rainfall Rescue dataset. The output mirrors the combined-CSV Parquet layout
+    (stations / monthly_rainfall / annual_totals / ingestion_file_errors), but
+    grid/latitude/longitude/elevation are absent from the sheets and stored as null.
+    """
+    source_root = rainfall_rescue_root / "ALLSHEETS"
+    csv_paths = discover_allsheets_csv_files(source_root)
+    if max_files is not None:
+        csv_paths = csv_paths[:max_files]
+
+    _reset_dataset_root(dataset_root, overwrite=overwrite)
+
+    stations_rows: list[dict] = []
+    monthly_rows: list[dict] = []
+    annual_rows: list[dict] = []
+    error_rows: list[dict] = []
+
+    part_stations = 0
+    part_monthly = 0
+    part_annual = 0
+    part_errors = 0
+
+    files_ingested = 0
+    monthly_n = 0
+    annual_n = 0
+    errors = 0
+
+    for idx, csv_path in enumerate(csv_paths, start=1):
+        try:
+            parsed = parse_allsheets_csv(csv_path, source_root)
             s = parsed.station
             stations_rows.append(
                 {
@@ -526,6 +711,12 @@ def default_rainfall_rescue_parquet_root() -> Path:
     """Default Rainfall Rescue Parquet dataset root."""
     root = default_rainfall_rescue_root()
     return root / "rainfall_rescue_parquet"
+
+
+def default_allsheets_parquet_root() -> Path:
+    """Default ALLSHEETS Parquet dataset root."""
+    root = default_rainfall_rescue_root()
+    return root / "rainfall_rescue_allsheets_parquet"
 
 
 def default_ensemble_parquet_root() -> Path:
