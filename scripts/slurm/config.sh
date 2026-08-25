@@ -2,8 +2,10 @@
 # Source this from the sbatch scripts and the submit driver.
 
 # --- Paths ---------------------------------------------------------------
-export REPO_ROOT="/home/users/philip.brohan/Projects/Auto-Daily-Rainfall-QC-MO"
-export CONDA_ENV_PREFIX="/data/users/philip.brohan/conda/environments/ADRQ"
+# Conditional so a caller (e.g. scripts/local/config_local.sh) can override
+# these for non-SLURM environments before this file is sourced again.
+export REPO_ROOT="${REPO_ROOT:-/home/users/philip.brohan/Projects/Auto-Daily-Rainfall-QC-MO}"
+export CONDA_ENV_PREFIX="${CONDA_ENV_PREFIX:-/data/users/philip.brohan/conda/environments/ADRQ}"
 
 # PDIR holds the SQLite databases and shard outputs (shared disc).
 export PDIR="${PDIR:-/data/scratch/philip.brohan/ADRQ}"
@@ -154,6 +156,11 @@ export QC_MERGE_TIME_MIN="${QC_MERGE_TIME_MIN:-180}"
 # Submit with submit_transcription_qc.sh.
 export TQC_ROOT="${TQC_ROOT:-${PDIR}/transcription_qc_parquet}"
 export TQC_SHARD_DIR="${TQC_SHARD_DIR:-${PDIR}/transcription_qc_shards}"
+export TQC_GOOD_ROOT="${TQC_GOOD_ROOT:-${PDIR}/ensemble_transcriptions_parquet_good}"
+# Baseline matching reads the filtered, deduplicated transcription dataset.
+# Keep ENSEMBLE_PARQUET_ROOT for ingest and transcription-source QC, which need
+# the complete source dataset to calculate quality signals.
+export MATCH_ENSEMBLE_PARQUET_ROOT="${MATCH_ENSEMBLE_PARQUET_ROOT:-${TQC_GOOD_ROOT}}"
 export TQC_NUM_SHARDS="${TQC_NUM_SHARDS:-100}"
 # Upper bound on file_id (used to compute each shard's slice). Refresh with the
 # max file_id from the ensemble dataset after a new ingest.

@@ -31,10 +31,11 @@ export DUCKDB_TEMP_DIR="${TMPDIR:-/var/tmp}/duckdb_build_${SLURM_JOB_ID:-$$}"
 mkdir -p "${DUCKDB_TEMP_DIR}"
 trap 'rm -rf "${DUCKDB_TEMP_DIR}"' EXIT
 
-echo "Building comparison vectors -> ${COMPARISON_PARQUET_ROOT}"
+echo "Building comparison vectors from ${MATCH_ENSEMBLE_PARQUET_ROOT} -> ${COMPARISON_PARQUET_ROOT}"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
 run_py scripts/build_similarity_vectors.py \
     --backend duckdb \
+    --ensemble-dataset-root "${MATCH_ENSEMBLE_PARQUET_ROOT}" \
     --comparison-root "${COMPARISON_PARQUET_ROOT}"
 
 echo "Build complete."

@@ -33,6 +33,8 @@ echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP
 run_py scripts/merge_transcription_qc_shards.py \
     --shard-dir "${TQC_SHARD_DIR}" \
     --qc-root "${TQC_ROOT}" \
+    --ensemble-dataset-root "${ENSEMBLE_PARQUET_ROOT}" \
+    --good-dataset-root "${TQC_GOOD_ROOT}" \
     --expected-shards "${TQC_NUM_SHARDS}" \
     --min-nonzero-days "${TQC_MIN_NONZERO_DAYS}" \
     --round-decimals "${TQC_ROUND_DECIMALS}" \

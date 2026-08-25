@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -112,6 +113,14 @@ def default_transcription_qc_shard_dir() -> Path:
     if not pdir:
         raise EnvironmentError("PDIR is not set; pass shard_dir explicitly")
     return Path(pdir) / "transcription_qc_shards"
+
+
+def default_good_ensemble_parquet_root() -> Path:
+    """Return the default destination for deduplicated, good-only sources."""
+    pdir = os.environ.get("PDIR")
+    if not pdir:
+        raise EnvironmentError("PDIR is not set; pass output_root explicitly")
+    return Path(pdir) / "ensemble_transcriptions_parquet_good"
 
 
 def file_id_bounds(total_file_ids: int, num_shards: int, shard_index: int) -> Tuple[int, int]:
@@ -602,6 +611,83 @@ def merge_transcription_qc_shards_parquet(
         min_agreement=min_agreement,
         max_block=max_block,
     )
+
+
+def export_good_ensemble_parquet(
+    *,
+    ensemble_dataset_root: Path,
+    qc_root: Path,
+    session_id: int,
+    output_root: Path,
+) -> Tuple[int, int, int, int]:
+    """Export non-bad sources, retaining one representative per duplicate group."""
+    file_quality_path = qc_root / "file_quality" / f"session_{session_id}.parquet"
+    groups_path = qc_root / "duplicate_groups" / f"session_{session_id}.parquet"
+    if not file_quality_path.is_file() or not groups_path.is_file():
+        raise FileNotFoundError(f"Missing QC outputs for session {session_id}")
+
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_paths = {
+        "files": output_root / "ensemble_files" / "data.parquet",
+        "daily": output_root / "ensemble_daily_values" / "data.parquet",
+        "totals": output_root / "ensemble_monthly_totals" / "data.parquet",
+    }
+    for output_path in output_paths.values():
+        table_dir = output_path.parent
+        legacy_path = output_root / f"{table_dir.name}.parquet"
+        if legacy_path.exists():
+            legacy_path.unlink()
+        if table_dir.is_dir():
+            shutil.rmtree(table_dir)
+        elif table_dir.exists():
+            table_dir.unlink()
+
+    conn = _connect()
+    try:
+        conn.execute(
+            f"""
+            CREATE TEMP VIEW good_files AS
+            SELECT fq.file_id
+            FROM read_parquet('{file_quality_path.resolve()}') AS fq
+            LEFT JOIN read_parquet('{groups_path.resolve()}') AS dg USING (file_id)
+            WHERE NOT fq.bad_source
+              AND (dg.file_id IS NULL OR dg.duplicate_rank = 1)
+            """
+        )
+
+        source_paths = {
+            "files": _glob_sql(ensemble_dataset_root / "ensemble_files"),
+            "daily": _glob_sql(ensemble_dataset_root / "ensemble_daily_values"),
+            "totals": _glob_sql(ensemble_dataset_root / "ensemble_monthly_totals"),
+        }
+        for name, source_path in source_paths.items():
+            output_paths[name].parent.mkdir(parents=True, exist_ok=True)
+            conn.execute(
+                f"""
+                COPY (
+                    SELECT source.*
+                    FROM read_parquet('{source_path}') AS source
+                    JOIN good_files USING (file_id)
+                ) TO '{output_paths[name].resolve()}' (FORMAT PARQUET, COMPRESSION ZSTD)
+                """
+            )
+
+        good_files = int(conn.execute("SELECT COUNT(*) FROM good_files").fetchone()[0])
+        files_rows = int(
+            conn.execute(f"SELECT COUNT(*) FROM read_parquet('{output_paths['files']}')").fetchone()[0]
+        )
+        daily_rows = int(
+            conn.execute(f"SELECT COUNT(*) FROM read_parquet('{output_paths['daily']}')").fetchone()[0]
+        )
+        totals_rows = int(
+            conn.execute(f"SELECT COUNT(*) FROM read_parquet('{output_paths['totals']}')").fetchone()[0]
+        )
+    finally:
+        conn.close()
+
+    if files_rows != good_files:
+        raise RuntimeError(f"Expected {good_files} good files, exported {files_rows}")
+    return good_files, files_rows, daily_rows, totals_rows
 
 
 def run_transcription_qc(

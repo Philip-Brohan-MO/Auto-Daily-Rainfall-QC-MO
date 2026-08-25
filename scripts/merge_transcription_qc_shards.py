@@ -26,14 +26,18 @@ from src.rainfall_rescue_sqlite.parquet_transcription_qc import (
     DEFAULT_ROUND_DECIMALS,
     default_transcription_qc_parquet_root,
     default_transcription_qc_shard_dir,
+    export_good_ensemble_parquet,
     merge_transcription_qc_shards_parquet,
 )
+from src.rainfall_rescue_sqlite.parquet_ingest import default_ensemble_parquet_root
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge transcription-QC shards")
     parser.add_argument("--shard-dir", type=Path, default=None)
     parser.add_argument("--qc-root", type=Path, default=None)
+    parser.add_argument("--ensemble-dataset-root", type=Path, required=True)
+    parser.add_argument("--good-dataset-root", type=Path, required=True)
     parser.add_argument("--expected-shards", type=int, default=None)
     parser.add_argument(
         "--min-nonzero-days", type=int, default=DEFAULT_MIN_NONZERO_DAYS
@@ -64,6 +68,12 @@ def main() -> None:
         min_agreement=args.min_agreement,
         max_block=args.max_block,
     )
+    good_files, files_rows, daily_rows, totals_rows = export_good_ensemble_parquet(
+        ensemble_dataset_root=args.ensemble_dataset_root or default_ensemble_parquet_root(),
+        qc_root=qc_root,
+        session_id=result.session_id,
+        output_root=args.good_dataset_root,
+    )
 
     print("Transcription-QC merge complete")
     print(f"  Session:              {result.session_id}")
@@ -77,6 +87,10 @@ def main() -> None:
     print(f"  Duplicate groups:     {result.duplicate_groups}")
     print(f"  Files w/ duplicates:  {result.files_with_duplicates}")
     print(f"  Max group size:       {result.max_group_size}")
+    print("Good-only dataset exported")
+    print(f"  Root:                 {args.good_dataset_root}")
+    print(f"  Good sources:         {good_files}")
+    print(f"  Files / daily / totals: {files_rows} / {daily_rows} / {totals_rows}")
 
 
 if __name__ == "__main__":
