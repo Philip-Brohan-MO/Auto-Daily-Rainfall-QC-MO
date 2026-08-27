@@ -18,6 +18,7 @@ source "${SCRIPT_DIR}/config_local.sh"
 ARRAY_SBATCH_ARG="${1:?usage: run_array_local.sh <array_sbatch_file> <num_shards> [workers]}"
 NUM_SHARDS="${2:?usage: run_array_local.sh <array_sbatch_file> <num_shards> [workers]}"
 WORKERS="${3:-${LOCAL_WORKERS}}"
+WORKERS_FROM_CLI="${3:-}"
 
 ARRAY_SBATCH="${ARRAY_SBATCH_ARG}"
 if [[ ! -f "${ARRAY_SBATCH}" ]]; then
@@ -32,6 +33,15 @@ fi
 JOB_NAME="$(basename "${ARRAY_SBATCH}" .sbatch)"
 mkdir -p "${LOCAL_LOG_DIR}"
 rm -f "${LOCAL_LOG_DIR}/${JOB_NAME}_FAILED_"*
+
+# TQC shards are memory-heavy; clamp worker fan-out unless explicitly set per call.
+if [[ "${JOB_NAME}" == "transcription_qc_array" && -z "${WORKERS_FROM_CLI}" ]]; then
+    TQC_SAFE_WORKERS="${LOCAL_TQC_WORKERS:-4}"
+    if [[ "${WORKERS}" -gt "${TQC_SAFE_WORKERS}" ]]; then
+        echo "${JOB_NAME}: clamping workers ${WORKERS} -> ${TQC_SAFE_WORKERS} (set LOCAL_TQC_WORKERS or pass a 3rd arg to override)"
+        WORKERS="${TQC_SAFE_WORKERS}"
+    fi
+fi
 
 # Split the machine's cores/memory evenly across concurrent shard workers, so
 # the DuckDB-memory-cap / BLAS-thread-pinning logic already inside every

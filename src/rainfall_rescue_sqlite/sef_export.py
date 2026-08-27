@@ -37,11 +37,10 @@ Design (locked with the maintainer)
   ``qc1=pass`` days, tie-broken by lowest ``file_id``); the file-level ``Meta``
   lists every merged source and each observation records the source it came from.
 * **All exact-matched observations** are exported (every day of an exact-matched
-  station-year). The QC verdict travels in each observation's
-  per-observation ``Meta`` column as ``qc1=<pass|review|fail>``,
-  ``qc2=<pass|fail|indeterminate|NA>`` (``qc2`` only exists for the QC1-fail days
-  re-examined by the secondary check) and ``source=<specifier>`` (which duplicate
-  supplied the value).
+    station-year). The QC verdict travels in each observation's
+    per-observation ``Meta`` column as ``qc1=<pass|review|fail>`` and
+    ``qc2=<pass|fail|indeterminate|NA>`` from the canonical secondary-QC status
+    dataset, plus ``source=<specifier>`` (which duplicate supplied the value).
 * **Units**: the stored consensus is in inches; SEF ``Value`` is converted to
   millimetres (``× 25.4``) and the file-wide ``Meta`` records ``orig.units=in``.
 * **Every day** present in the transcription is emitted, including ``0.0`` (the
@@ -76,8 +75,8 @@ from .parquet_similarity import _configure_duckdb, default_comparison_parquet_ro
 SEF_VERSION = "1.0.0"
 
 # Header fields shared by every file produced from this dataset.
-DEFAULT_SOURCE = "RainfallRescue"
-DEFAULT_LINK = "NA"
+DEFAULT_SOURCE = "UK Daily Rainfall Registers"
+DEFAULT_LINK = "https://brohan.org/Auto-Daily-Rainfall-QC/"
 VBL = "rr"          # precipitation amount (C3S recommended abbreviation)
 STAT = "sum"        # daily accumulated total
 UNITS = "mm"        # SEF value units (converted from the original inches)
@@ -257,12 +256,7 @@ def _build_query(
             qc2 AS (
                 SELECT file_id, matched_year, month, day_of_month, secondary_flag
                 FROM read_parquet('{secondary_status_source}')
-                WHERE qc_session_id = {int(qc_session_id)}
-                  AND file_id IN (SELECT file_id FROM meta)
-                QUALIFY row_number() OVER (
-                    PARTITION BY file_id, matched_year, month, day_of_month
-                    ORDER BY train_session_id DESC
-                ) = 1
+                WHERE file_id IN (SELECT file_id FROM meta)
             ),
         """
         qc2_select = "q2.secondary_flag AS qc2_flag"

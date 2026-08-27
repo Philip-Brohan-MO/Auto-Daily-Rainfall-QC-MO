@@ -2,8 +2,8 @@
 # Submit the secondary-QC model pipeline (QC check 2, stage 2) as two dependent
 # single-node SLURM stages:
 #   1. secondary_qc_train  (fit models 1 & 2, calibrate k, persist artifacts)
-#   2. secondary_qc_score  (apply the models to the QC1-fail rows; starts after
-#      training succeeds)
+#   2. secondary_qc_score  (apply the models to QC1-assessed rows (pass + fail);
+#      starts after training succeeds)
 #
 # Usage:
 #   scripts/slurm/submit_secondary_qc.sh
@@ -12,15 +12,15 @@
 #
 # Prerequisites:
 #   1. QC check 1 must have been run (daily_qc_status must exist) -- supplies the
-#      pass rows (training) and fail rows (scoring).
+#      assessed rows (pass + fail) for both training and scoring.
 #   2. The regional-stats table must have been built with
 #      scripts/slurm/submit_regional_stats.sh (this script checks for it).
 #
 # After scoring finishes, inspect results in the notebook:
 #   notebooks/qc_RR_secondary_ml.ipynb
 #
-# The scoring stage streams the fail rows, so it runs as a single job. If the
-# fail set ever grows too large for one job it can be sharded by file_id with
+# The scoring stage streams assessed rows, so it runs as a single job. If the
+# row set ever grows too large for one job it can be sharded by file_id with
 # the same --start-file-id/--end-file-id args the score script accepts.
 #
 # Requires: sbatch on PATH, PDIR set.

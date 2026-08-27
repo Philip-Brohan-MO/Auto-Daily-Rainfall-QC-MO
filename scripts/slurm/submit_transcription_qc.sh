@@ -8,7 +8,7 @@
 #   scripts/slurm/submit_transcription_qc.sh
 #   TQC_NUM_SHARDS=200 scripts/slurm/submit_transcription_qc.sh
 #   TQC_TOTAL_FILE_IDS=700000 scripts/slurm/submit_transcription_qc.sh
-#   TQC_MIN_NONZERO_DAYS=30 scripts/slurm/submit_transcription_qc.sh
+#   TQC_MIN_NONZERO_DAYS=70 scripts/slurm/submit_transcription_qc.sh
 #
 # After the merge finishes, inspect results in the notebook:
 #   notebooks/Daily_transcriptions_ingest.ipynb (Quality control section)

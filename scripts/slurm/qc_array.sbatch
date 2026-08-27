@@ -36,12 +36,30 @@ trap 'rm -rf "${DUCKDB_TEMP_DIR}"' EXIT
 
 echo "QC shard ${SLURM_ARRAY_TASK_ID}/${QC_NUM_SHARDS}: file_ids partitioned from ${QC_TOTAL_FILE_IDS} total"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
-run_py scripts/run_qc_shard.py \
-    --backend duckdb \
-    --shard-dir "${QC_SHARD_DIR}" \
-    --num-shards "${QC_NUM_SHARDS}" \
-    --shard-index "${SLURM_ARRAY_TASK_ID}" \
-    --total-file-ids "${QC_TOTAL_FILE_IDS}" \
+QC_SIM_ARG=()
+if [[ -n "${SIMILARITY_SESSION_ID}" ]]; then
+    QC_SIM_ARG=(--similarity-session-id "${SIMILARITY_SESSION_ID}")
+fi
+QC_META_ARG=()
+if [[ -n "${METADATA_SESSION_ID}" ]]; then
+    QC_META_ARG=(--metadata-session-id "${METADATA_SESSION_ID}")
+fi
+
+cmd=(
+    scripts/run_qc_shard.py
+    --backend duckdb
+    --shard-dir "${QC_SHARD_DIR}"
+    --num-shards "${QC_NUM_SHARDS}"
+    --shard-index "${SLURM_ARRAY_TASK_ID}"
+    --total-file-ids "${QC_TOTAL_FILE_IDS}"
     --tolerance "${QC_TOLERANCE}"
+)
+if [[ ${#QC_SIM_ARG[@]} -gt 0 ]]; then
+    cmd+=("${QC_SIM_ARG[@]}")
+fi
+if [[ ${#QC_META_ARG[@]} -gt 0 ]]; then
+    cmd+=("${QC_META_ARG[@]}")
+fi
+run_py "${cmd[@]}"
 
 echo "QC shard ${SLURM_ARRAY_TASK_ID} complete."

@@ -2,8 +2,7 @@
 
 A *source* is one file == one year's sheet == 12 months x 31 = 372 day-cells,
 each cell being the consensus (median over the five ensemble members) of that
-day's rainfall. Two independent, purely *content-derived* signals are computed
-for every source:
+day's rainfall. QC currently computes one signal per source:
 
 1. **Bad transcription sources.** The number of the 372 day-cells that hold a
    real rainfall reading -- ``nonzero_days`` = cells whose consensus is both
@@ -14,20 +13,8 @@ for every source:
    always stores the raw count and only *flags* ``bad_source`` when it falls
    below a caller-supplied ``min_nonzero_days``.
 
-2. **Duplicate sources.** Most sheets are transcribed more than once, producing
-   several files that hold the *same* data apart from transcription errors.
-   Duplicates are detected from content alone -- never from the file name,
-   descriptor, section id or year range -- by comparing the full **372 daily
-   consensus values** of two sources. Candidate pairs are generated cheaply with
-   LSH-style banding over rounded monthly sums (robust: a few day-errors barely
-   move a month's total), then *confirmed at day level*: a pair is a duplicate
-   when at least ``min_agreement`` of their overlapping days agree within
-   ``match_tol`` mm, over at least ``min_overlap_days`` shared days.
-
 The heavy per-file aggregation (day-cell consensus + counts) is sharded by
-contiguous ``file_id`` range, exactly like the other Parquet pipelines; the
-duplicate self-join runs once in the merge step over the compact per-file
-metrics table (which carries each file's 372-value vector as a ``LIST``).
+contiguous ``file_id`` range, exactly like the other Parquet pipelines.
 Everything is written as a sessioned Parquet dataset under
 ``transcription_qc_parquet`` so runs are immutable and downstream code can read
 the latest session. ``nonzero_days`` is stored per file, so notebook diagnostics
@@ -71,7 +58,7 @@ DEFAULT_MIN_AGREEMENT = 0.9    # matching / overlap must reach this fraction
 DEFAULT_MAX_BLOCK = 2000       # skip degenerate blocks (e.g. all-zero vectors)
 
 # --- Bad-source default --------------------------------------------------
-DEFAULT_MIN_NONZERO_DAYS = 20  # flag files with fewer than this many rainfall days
+DEFAULT_MIN_NONZERO_DAYS = 50  # flag files with fewer than this many rainfall days
 
 
 @dataclass(frozen=True)
@@ -116,7 +103,7 @@ def default_transcription_qc_shard_dir() -> Path:
 
 
 def default_good_ensemble_parquet_root() -> Path:
-    """Return the default destination for deduplicated, good-only sources."""
+    """Return the default destination for bad-source-filtered sources."""
     pdir = os.environ.get("PDIR")
     if not pdir:
         raise EnvironmentError("PDIR is not set; pass output_root explicitly")
@@ -435,10 +422,12 @@ def write_qc_session(
 ) -> TranscriptionQCResult:
     """Turn a per-file metrics glob into a full QC session on disk.
 
-    Writes ``file_quality/``, ``duplicate_pairs/``, ``duplicate_groups/`` and a
-    ``qc_sessions/session_N.parquet`` summary row. Shared by the SLURM merge
-    step (metrics = the shard files) and the in-process runner (metrics = a
-    single file).
+    Writes ``file_quality/`` and a ``qc_sessions/session_N.parquet`` summary
+    row. For compatibility with downstream readers, this also writes empty
+    ``duplicate_pairs/`` and ``duplicate_groups/`` files.
+
+    Shared by the SLURM merge step (metrics = the shard files) and the
+    in-process runner (metrics = a single file).
     """
     qc_root.mkdir(parents=True, exist_ok=True)
     session_id = _next_session_id(qc_root)
@@ -476,15 +465,18 @@ def write_qc_session(
             ).fetchone()[0]
         )
 
-        # --- Duplicate pairs (content-only) ----------------------------------
+        # Duplicate matching is intentionally disabled. Keep empty outputs so
+        # existing readers that expect these paths keep working.
         pairs_df = conn.execute(
-            _duplicate_pairs_sql(
-                round_decimals=round_decimals,
-                match_tol=match_tol,
-                min_overlap_days=min_overlap_days,
-                min_agreement=min_agreement,
-                max_block=max_block,
-            )
+            """
+            SELECT
+                CAST(NULL AS BIGINT) AS file_id_a,
+                CAST(NULL AS BIGINT) AS file_id_b,
+                CAST(NULL AS BIGINT) AS overlap_days,
+                CAST(NULL AS BIGINT) AS matching_days,
+                CAST(NULL AS DOUBLE) AS agreement
+            WHERE 1 = 0
+            """
         ).df()
     finally:
         conn.close()
@@ -492,27 +484,10 @@ def write_qc_session(
     pairs_path = qc_root / "duplicate_pairs" / f"session_{session_id}.parquet"
     _write_table(pairs_path, pa.Table.from_pandas(pairs_df, schema=DUP_PAIR_SCHEMA, preserve_index=False))
 
-    # --- Duplicate groups via connected components ---------------------------
-    edges = list(zip(pairs_df["file_id_a"].tolist(), pairs_df["file_id_b"].tolist()))
-    node_group = _connected_components([(int(a), int(b)) for a, b in edges])
-
+    # Duplicate grouping is intentionally disabled.
+    node_group: Dict[int, int] = {}
     groups: Dict[int, List[int]] = {}
-    for file_id, group_id in node_group.items():
-        groups.setdefault(group_id, []).append(file_id)
-
     group_rows: List[dict] = []
-    for group_id, members in groups.items():
-        members.sort()
-        size = len(members)
-        for rank, file_id in enumerate(members, start=1):
-            group_rows.append(
-                {
-                    "file_id": file_id,
-                    "group_id": group_id,
-                    "group_size": size,
-                    "duplicate_rank": rank,
-                }
-            )
     groups_path = qc_root / "duplicate_groups" / f"session_{session_id}.parquet"
     _write_table(
         groups_path,
@@ -620,10 +595,9 @@ def export_good_ensemble_parquet(
     session_id: int,
     output_root: Path,
 ) -> Tuple[int, int, int, int]:
-    """Export non-bad sources, retaining one representative per duplicate group."""
+    """Export all non-bad sources (no duplicate collapsing)."""
     file_quality_path = qc_root / "file_quality" / f"session_{session_id}.parquet"
-    groups_path = qc_root / "duplicate_groups" / f"session_{session_id}.parquet"
-    if not file_quality_path.is_file() or not groups_path.is_file():
+    if not file_quality_path.is_file():
         raise FileNotFoundError(f"Missing QC outputs for session {session_id}")
 
     output_root.mkdir(parents=True, exist_ok=True)
@@ -649,9 +623,7 @@ def export_good_ensemble_parquet(
             CREATE TEMP VIEW good_files AS
             SELECT fq.file_id
             FROM read_parquet('{file_quality_path.resolve()}') AS fq
-            LEFT JOIN read_parquet('{groups_path.resolve()}') AS dg USING (file_id)
             WHERE NOT fq.bad_source
-              AND (dg.file_id IS NULL OR dg.duplicate_rank = 1)
             """
         )
 

@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ensemble-db-path", type=Path, default=None)
     parser.add_argument("--qc-root", type=Path, default=None)
     parser.add_argument("--similarity-session-id", type=int, default=None)
+    parser.add_argument("--metadata-session-id", type=int, default=None)
     parser.add_argument(
         "--shard-dir",
         type=Path,
@@ -110,6 +111,7 @@ def main() -> None:
         shard_paths=shard_paths,
         tolerance=args.tolerance,
         similarity_session_id=args.similarity_session_id,
+        metadata_session_id=args.metadata_session_id,
         num_shards=args.expected_shards,
     )
 

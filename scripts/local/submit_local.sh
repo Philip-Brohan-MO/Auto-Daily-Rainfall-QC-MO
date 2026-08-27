@@ -9,6 +9,7 @@
 # Usage:
 #   scripts/local/submit_local.sh <pipeline-name>
 #   scripts/local/submit_local.sh                      # lists registered pipelines
+#   scripts/local/submit_local.sh match_metadata       # one-command metadata matching flow
 #   TQC_NUM_SHARDS=8 scripts/local/submit_local.sh transcription_qc
 #   LOCAL_WORKERS=12 scripts/local/submit_local.sh regional_stats
 #
@@ -46,10 +47,30 @@ while IFS= read -r stage; do
             file="${rest%%:*}"
             spec="${rest#*:}"
             if [[ "${spec}" == fn:* ]]; then
-                num_shards="$("${spec#fn:}")"
+                num_shards="$(${spec#fn:})"
             else
                 num_shards="${!spec}"
             fi
+            case "${file}" in
+                transcription_qc_array.sbatch)
+                    rm -f "${TQC_SHARD_DIR:-}"/tqc_shard_*.parquet 2>/dev/null || true
+                    ;;
+                qc_array.sbatch)
+                    rm -f "${QC_SHARD_DIR:-}"/qc_shard_*.parquet 2>/dev/null || true
+                    ;;
+                daily_consensus_array.sbatch)
+                    rm -f "${CONSENSUS_SHARD_DIR:-}"/consensus_shard_*.parquet 2>/dev/null || true
+                    ;;
+                regional_stats_array.sbatch)
+                    rm -f "${REGIONAL_SHARD_DIR:-}"/regional_stats_*.parquet 2>/dev/null || true
+                    ;;
+                similarity_array.sbatch)
+                    rm -f "${SIMILARITY_SHARD_DIR:-}"/similarity_shard_*.parquet 2>/dev/null || true
+                    ;;
+                ensemble_ingest_array.sbatch)
+                    rm -f "${ENSEMBLE_SHARD_DIR:-}"/ensemble_shard_*.parquet 2>/dev/null || true
+                    ;;
+            esac
             echo ">>> [${PIPELINE}] array stage: ${file} (${num_shards} shards)"
             "${SCRIPT_DIR}/run_array_local.sh" "${SLURM_DIR}/${file}" "${num_shards}" \
                 || { echo "ERROR: array stage ${file} failed" >&2; exit 1; }
@@ -58,8 +79,17 @@ while IFS= read -r stage; do
             path="${rest%%:*}"
             hint="${rest#*:}"
             if [[ ! -e "${path}" ]]; then
-                echo "ERROR: required input not found: ${path}" >&2
-                echo "  ${hint}" >&2
+                echo "ERROR: missing required input for pipeline '${PIPELINE}': ${path}" >&2
+                echo "HINT: ${hint}" >&2
+                exit 1
+            fi
+            ;;
+        check_glob)
+            pattern="${rest%%:*}"
+            hint="${rest#*:}"
+            if ! compgen -G "${pattern}" > /dev/null; then
+                echo "ERROR: missing required input files for pipeline '${PIPELINE}': ${pattern}" >&2
+                echo "HINT: ${hint}" >&2
                 exit 1
             fi
             ;;
@@ -69,5 +99,16 @@ while IFS= read -r stage; do
             ;;
     esac
 done <<< "${STAGES}"
+
+if [[ "${PIPELINE}" == "main" ]]; then
+    echo "WARNING: pipeline name 'main' is deprecated; use 'match_metadata'" >&2
+fi
+
+if [[ "${PIPELINE}" == "match_metadata" || "${PIPELINE}" == "main" ]]; then
+    echo ">>> [${PIPELINE}] validating published manifest"
+    run_py scripts/local/verify_match_metadata_manifest.py \
+        --comparison-root "${COMPARISON_PARQUET_ROOT}" \
+        || { echo "ERROR: match_metadata manifest validation failed" >&2; exit 1; }
+fi
 
 echo "Pipeline '${PIPELINE}' completed."

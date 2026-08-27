@@ -1,10 +1,11 @@
-"""Score the QC1-failed station-days with the secondary-QC models.
+"""Score QC1 pass/fail station-days with the secondary-QC models.
 
-Applies the trained expectation models to every station-day that *failed* the
-first QC check, flagging each ``pass`` (plausible), ``fail`` (genuinely suspect)
-or ``indeterminate`` (no neighbours / no consensus value). The failed rows are
-streamed, so this runs comfortably as a single job; an optional ``--start-file-id``
-/ ``--end-file-id`` range lets it be sharded like the regional-stats stage.
+Applies the trained expectation models to every station-day that *passed or
+failed* the first QC check, flagging each ``pass`` (plausible), ``fail``
+(genuinely suspect) or ``indeterminate`` (no neighbours / no consensus value).
+Rows are streamed, so this runs comfortably as a single job; an optional
+``--start-file-id`` / ``--end-file-id`` range lets it be sharded like the
+regional-stats stage.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from src.rainfall_rescue_sqlite.parquet_secondary_qc import (
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Score failed days with the secondary-QC models")
+    parser = argparse.ArgumentParser(description="Score pass/fail days with the secondary-QC models")
     parser.add_argument("--regional-root", type=Path, default=None)
     parser.add_argument("--qc-root", type=Path, default=None)
     parser.add_argument("--secondary-qc-root", type=Path, default=None)
@@ -38,7 +39,7 @@ def parse_args() -> argparse.Namespace:
         "--qc-session-id",
         type=int,
         default=None,
-        help="QC1 session whose 'fail' flags are re-tested (default: latest)",
+        help="QC1 session whose pass/fail rows are re-tested (default: latest)",
     )
     parser.add_argument("--output", type=Path, default=None, help="Output parquet path")
     parser.add_argument("--start-file-id", type=int, default=None)

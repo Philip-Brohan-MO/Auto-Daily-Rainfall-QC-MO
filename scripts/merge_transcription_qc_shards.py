@@ -1,10 +1,11 @@
 """Merge transcription-QC shards into a single QC session.
 
 Reads all per-file metric shards (``tqc_shard_*.parquet``) produced by the
-array step, flags bad transcription sources (too few rainfall days), detects
-duplicate sources from content alone (day-level agreement), and writes the
-sessioned Parquet outputs (``file_quality`` / ``duplicate_pairs`` /
-``duplicate_groups`` / ``qc_sessions``) under the transcription-QC root.
+array step, flags bad transcription sources (too few rainfall days), and writes
+sessioned outputs under the transcription-QC root.
+
+Duplicate matching is disabled; ``duplicate_pairs`` and ``duplicate_groups`` are
+written as empty compatibility artifacts.
 """
 
 from __future__ import annotations
@@ -83,13 +84,14 @@ def main() -> None:
         f"  Bad sources:          {result.bad_sources} "
         f"(nonzero_days < {result.min_nonzero_days})"
     )
+    print("  Duplicate matching:   disabled")
     print(f"  Duplicate pairs:      {result.duplicate_pairs}")
     print(f"  Duplicate groups:     {result.duplicate_groups}")
     print(f"  Files w/ duplicates:  {result.files_with_duplicates}")
     print(f"  Max group size:       {result.max_group_size}")
     print("Good-only dataset exported")
     print(f"  Root:                 {args.good_dataset_root}")
-    print(f"  Good sources:         {good_files}")
+    print(f"  Good sources (non-bad): {good_files}")
     print(f"  Files / daily / totals: {files_rows} / {daily_rows} / {totals_rows}")
 
 

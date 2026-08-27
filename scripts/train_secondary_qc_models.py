@@ -1,9 +1,9 @@
 """Train the two secondary-QC XGBoost models (stage 2 of the second QC check).
 
-Loads the reliable (QC1-pass) station-days, fits model 1 (predicts a station's
-consensus rainfall from its regional neighbour statistics) and model 2 (predicts
-model 1's absolute error), calibrates the expectation-range multiplier ``k`` and
-persists both models plus a training-session record.
+Loads QC1-assessed station-days (pass + fail), fits model 1 (predicts a
+station's consensus rainfall from its regional neighbour statistics) and model 2
+(predicts model 1's absolute error), calibrates the expectation-range
+multiplier ``k`` and persists both models plus a training-session record.
 
 Run as a single job (XGBoost is multithreaded); size the node with enough cores
 and memory for the requested ``--max-rows`` sample.
@@ -81,9 +81,9 @@ def main() -> None:
         max_rows=max_rows,
         seed=args.seed,
     )
-    print(f"Training on {len(frame)} reliable station-days.", flush=True)
+    print(f"Training on {len(frame)} QC1-assessed station-days.", flush=True)
     if frame.empty:
-        raise SystemExit("No reliable (QC1-pass) rows found; cannot train.")
+        raise SystemExit("No eligible QC1-assessed rows found; cannot train.")
 
     # Resolve the qc_session_id actually used so it is recorded with the models.
     from src.rainfall_rescue_sqlite.parquet_secondary_qc import _resolve_qc_session_id

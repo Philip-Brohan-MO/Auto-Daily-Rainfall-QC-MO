@@ -44,13 +44,20 @@ fi
 
 echo "Finalising ALLSHEETS metadata -> new combined session under ${COMPARISON_PARQUET_ROOT}"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
-run_py scripts/finalize_allsheets_metadata.py \
-    --allsheets-comparison-root "${ALLSHEETS_COMPARISON_PARQUET_ROOT}" \
-    --source-comparison-root "${COMPARISON_PARQUET_ROOT}" \
-    --ensemble-dataset-root "${ENSEMBLE_PARQUET_ROOT}" \
-    --allsheets-dataset-root "${ALLSHEETS_PARQUET_ROOT}" \
-    --allsheets-match-type "${ALLSHEETS_MATCH_TYPE}" \
-    "${META_ARG[@]}" \
-    "${CSV_ARG[@]}"
+cmd=(
+    scripts/finalize_allsheets_metadata.py
+    --allsheets-comparison-root "${ALLSHEETS_COMPARISON_PARQUET_ROOT}"
+    --source-comparison-root "${COMPARISON_PARQUET_ROOT}"
+    --ensemble-dataset-root "${ENSEMBLE_PARQUET_ROOT}"
+    --allsheets-dataset-root "${ALLSHEETS_PARQUET_ROOT}"
+    --allsheets-match-type "${ALLSHEETS_MATCH_TYPE}"
+)
+if [[ ${#META_ARG[@]} -gt 0 ]]; then
+    cmd+=("${META_ARG[@]}")
+fi
+if [[ ${#CSV_ARG[@]} -gt 0 ]]; then
+    cmd+=("${CSV_ARG[@]}")
+fi
+run_py "${cmd[@]}"
 
 echo "ALLSHEETS finalise complete."

@@ -47,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--rr-dataset-root", type=Path, default=None)
     parser.add_argument("--qc-root", type=Path, default=None)
     parser.add_argument("--similarity-session-id", type=int, default=None)
+    parser.add_argument("--metadata-session-id", type=int, default=None)
     parser.add_argument("--tolerance", type=float, default=0.01)
     parser.add_argument("--qc-session-id", type=int, default=None)
     parser.add_argument("--start-file-id", type=int, default=None)
@@ -87,6 +88,7 @@ def main() -> None:
         tolerance=args.tolerance,
         qc_session_id=args.qc_session_id,
         similarity_session_id=args.similarity_session_id,
+        metadata_session_id=args.metadata_session_id,
         start_file_id=args.start_file_id,
         end_file_id=args.end_file_id,
     )
