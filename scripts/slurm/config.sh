@@ -4,8 +4,20 @@
 # --- Paths ---------------------------------------------------------------
 # Conditional so a caller (e.g. scripts/local/config_local.sh) can override
 # these for non-SLURM environments before this file is sourced again.
-export REPO_ROOT="${REPO_ROOT:-/home/users/philip.brohan/Projects/Auto-Daily-Rainfall-QC-MO}"
-export CONDA_ENV_PREFIX="${CONDA_ENV_PREFIX:-/data/users/philip.brohan/conda/environments/ADRQ}"
+_RQC_SLURM_DIR_DEFAULT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_RQC_REPO_ROOT_DEFAULT="$(cd "${_RQC_SLURM_DIR_DEFAULT}/../.." && pwd)"
+export REPO_ROOT="${REPO_ROOT:-${_RQC_REPO_ROOT_DEFAULT}}"
+if [[ -z "${CONDA_ENV_PREFIX:-}" ]]; then
+    if [[ -d "${HOME}/miniconda3/envs/ADRQ" ]]; then
+        export CONDA_ENV_PREFIX="${HOME}/miniconda3/envs/ADRQ"
+    elif [[ -n "${CONDA_PREFIX:-}" ]]; then
+        export CONDA_ENV_PREFIX="${CONDA_PREFIX}"
+    else
+        export CONDA_ENV_PREFIX="/data/users/philip.brohan/conda/environments/ADRQ"
+    fi
+else
+    export CONDA_ENV_PREFIX
+fi
 
 # PDIR holds the SQLite databases and shard outputs (shared disc).
 export PDIR="${PDIR:-/data/scratch/philip.brohan/ADRQ}"

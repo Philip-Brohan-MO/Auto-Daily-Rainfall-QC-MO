@@ -23,6 +23,8 @@ dependencies:
   - xgboost  # Gradient-boosted regressors for the secondary QC check
   - scikit-learn  # K-fold splitting, metrics
   - joblib  # Model persistence
+# Make video animations of diagnostic plots
+  - ffmpeg
 
 # Some stuff is pip-only
   - pip
