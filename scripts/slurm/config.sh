@@ -4,8 +4,20 @@
 # --- Paths ---------------------------------------------------------------
 # Conditional so a caller (e.g. scripts/local/config_local.sh) can override
 # these for non-SLURM environments before this file is sourced again.
-export REPO_ROOT="${REPO_ROOT:-/home/users/philip.brohan/Projects/Auto-Daily-Rainfall-QC-MO}"
-export CONDA_ENV_PREFIX="${CONDA_ENV_PREFIX:-/data/users/philip.brohan/conda/environments/ADRQ}"
+_RQC_SLURM_DIR_DEFAULT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_RQC_REPO_ROOT_DEFAULT="$(cd "${_RQC_SLURM_DIR_DEFAULT}/../.." && pwd)"
+export REPO_ROOT="${REPO_ROOT:-${_RQC_REPO_ROOT_DEFAULT}}"
+if [[ -z "${CONDA_ENV_PREFIX:-}" ]]; then
+    if [[ -d "${HOME}/miniconda3/envs/ADRQ" ]]; then
+        export CONDA_ENV_PREFIX="${HOME}/miniconda3/envs/ADRQ"
+    elif [[ -n "${CONDA_PREFIX:-}" ]]; then
+        export CONDA_ENV_PREFIX="${CONDA_PREFIX}"
+    else
+        export CONDA_ENV_PREFIX="/data/users/philip.brohan/conda/environments/ADRQ"
+    fi
+else
+    export CONDA_ENV_PREFIX
+fi
 
 # PDIR holds the SQLite databases and shard outputs (shared disc).
 export PDIR="${PDIR:-/data/scratch/philip.brohan/ADRQ}"
@@ -127,6 +139,12 @@ export RENCODE_TIME_MIN="${RENCODE_TIME_MIN:-240}"
 export QC_NUM_SHARDS="${QC_NUM_SHARDS:-100}"
 export QC_SHARD_DIR="${PDIR}/qc_shards"
 export QC_TOLERANCE="${QC_TOLERANCE:-0.01}"
+# Optional explicit session IDs used by QC check #1. Leave empty to auto-resolve
+# latest similarity session_id and latest metadata match_source_session_id.
+export SIMILARITY_SESSION_ID="${SIMILARITY_SESSION_ID:-}"
+export METADATA_SESSION_ID="${METADATA_SESSION_ID:-}"
+# Optional explicit QC session ID. Leave empty to auto-resolve latest QC session.
+export QC_SESSION_ID="${QC_SESSION_ID:-}"
 # Total file_ids in the ensemble DB. Passed to each shard so it can compute
 # its start/end file_id slice.  Run:
 #   sqlite3 $PDIR/ensemble_transcriptions.sqlite \
@@ -157,7 +175,7 @@ export QC_MERGE_TIME_MIN="${QC_MERGE_TIME_MIN:-180}"
 export TQC_ROOT="${TQC_ROOT:-${PDIR}/transcription_qc_parquet}"
 export TQC_SHARD_DIR="${TQC_SHARD_DIR:-${PDIR}/transcription_qc_shards}"
 export TQC_GOOD_ROOT="${TQC_GOOD_ROOT:-${PDIR}/ensemble_transcriptions_parquet_good}"
-# Baseline matching reads the filtered, deduplicated transcription dataset.
+# Baseline matching reads the bad-source-filtered transcription dataset.
 # Keep ENSEMBLE_PARQUET_ROOT for ingest and transcription-source QC, which need
 # the complete source dataset to calculate quality signals.
 export MATCH_ENSEMBLE_PARQUET_ROOT="${MATCH_ENSEMBLE_PARQUET_ROOT:-${TQC_GOOD_ROOT}}"
@@ -169,7 +187,7 @@ export TQC_TOTAL_FILE_IDS="${TQC_TOTAL_FILE_IDS:-680000}"
 # Bad-source flag: a source is bad when fewer than this many of its 372 day-cells
 # hold real rainfall (non-null and > 0). Pick from the nonzero_days distribution
 # in Daily_transcriptions_ingest.
-export TQC_MIN_NONZERO_DAYS="${TQC_MIN_NONZERO_DAYS:-20}"
+export TQC_MIN_NONZERO_DAYS="${TQC_MIN_NONZERO_DAYS:-50}"
 
 # Duplicate-detection tunables (content-only, day-level scoring).
 export TQC_ROUND_DECIMALS="${TQC_ROUND_DECIMALS:-1}"
@@ -229,7 +247,8 @@ export REGIONAL_MERGE_TIME_MIN="${REGIONAL_MERGE_TIME_MIN:-120}"
 # Two dependent single-node jobs:
 #   1. secondary_qc_train  -- fit model 1 (predict a station's consensus from its
 #      regional neighbour stats) and model 2 (predict model 1's absolute error)
-#      on the QC1-pass rows; calibrate the range multiplier k; persist the models.
+#      on QC1-assessed rows (pass + fail); calibrate the range multiplier k;
+#      persist the models.
 #   2. secondary_qc_score  -- apply the models to the QC1-fail rows and flag each
 #      pass / fail / indeterminate.
 # Training reads a month-stratified sample (SECONDARY_MAX_TRAIN_ROWS) so it fits
@@ -262,8 +281,8 @@ export SEF_NUM_SHARDS="${SEF_NUM_SHARDS:-100}"
 export SEF_MIN_YEAR="${SEF_MIN_YEAR:-1677}"
 export SEF_MAX_YEAR="${SEF_MAX_YEAR:-1980}"
 # SEF header provenance and the daily observation hour (UK rainfall day ends 09:00).
-export SEF_SOURCE="${SEF_SOURCE:-RainfallRescue}"
-export SEF_LINK="${SEF_LINK:-NA}"
+export SEF_SOURCE="${SEF_SOURCE:-UK Daily Rainfall Registers}"
+export SEF_LINK="${SEF_LINK:-https://brohan.org/Auto-Daily-Rainfall-QC/}"
 export SEF_OBS_HOUR="${SEF_OBS_HOUR:-9}"
 
 export SEF_CORES="${SEF_CORES:-1}"

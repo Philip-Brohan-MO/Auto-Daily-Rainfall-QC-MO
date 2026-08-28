@@ -31,10 +31,28 @@ trap 'rm -rf "${DUCKDB_TEMP_DIR}"' EXIT
 
 echo "Merging ${QC_NUM_SHARDS} QC shards from ${QC_SHARD_DIR} into parquet QC dataset"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
-run_py scripts/merge_qc_shards.py \
-    --backend duckdb \
-    --shard-dir "${QC_SHARD_DIR}" \
-    --tolerance "${QC_TOLERANCE}" \
+QC_SIM_ARG=()
+if [[ -n "${SIMILARITY_SESSION_ID}" ]]; then
+    QC_SIM_ARG=(--similarity-session-id "${SIMILARITY_SESSION_ID}")
+fi
+QC_META_ARG=()
+if [[ -n "${METADATA_SESSION_ID}" ]]; then
+    QC_META_ARG=(--metadata-session-id "${METADATA_SESSION_ID}")
+fi
+
+cmd=(
+    scripts/merge_qc_shards.py
+    --backend duckdb
+    --shard-dir "${QC_SHARD_DIR}"
+    --tolerance "${QC_TOLERANCE}"
     --expected-shards "${QC_NUM_SHARDS}"
+)
+if [[ ${#QC_SIM_ARG[@]} -gt 0 ]]; then
+    cmd+=("${QC_SIM_ARG[@]}")
+fi
+if [[ ${#QC_META_ARG[@]} -gt 0 ]]; then
+    cmd+=("${QC_META_ARG[@]}")
+fi
+run_py "${cmd[@]}"
 
 echo "QC merge complete."

@@ -17,14 +17,14 @@ set_thread_env
 
 cd "${REPO_ROOT}"
 
-KEEP_FLAG=()
-if [[ "${RENDER_KEEP_FRAMES}" == "1" ]]; then
-    KEEP_FLAG+=(--keep-frames)
-fi
-
 echo "Encoding frames to MP4 from ${RENDER_MANIFEST}"
-run_py scripts/render_animation_encode.py \
-    --manifest-path "${RENDER_MANIFEST}" \
-    "${KEEP_FLAG[@]}"
+if [[ "${RENDER_KEEP_FRAMES}" == "1" ]]; then
+    run_py scripts/render_animation_encode.py \
+        --manifest-path "${RENDER_MANIFEST}" \
+        --keep-frames
+else
+    run_py scripts/render_animation_encode.py \
+        --manifest-path "${RENDER_MANIFEST}"
+fi
 
 echo "Encode complete."

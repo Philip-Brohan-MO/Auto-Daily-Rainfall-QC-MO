@@ -1,5 +1,6 @@
 name: ADRQ
 # Base environment for the Auto-Daily-Rainfall QC work.
+# Mac version
 channels:
   - conda-forge
 dependencies:
@@ -12,7 +13,7 @@ dependencies:
   - myst-parser  # Markdown sources for the Sphinx docs
 # Better JSON
   - json5  
-# Data storage in SQLite
+# Data storage
   - sqlite=3.53
   - duckdb
   - pyarrow
@@ -22,6 +23,8 @@ dependencies:
   - xgboost  # Gradient-boosted regressors for the secondary QC check
   - scikit-learn  # K-fold splitting, metrics
   - joblib  # Model persistence
+# Make video animations of diagnostic plots
+  - ffmpeg
 
 # Some stuff is pip-only
   - pip
@@ -35,7 +38,7 @@ variables:
 # (A hack, needs to be edited for every installation, but makes code
 #  management much easier.)
 # Replace with the path to your project directory root.
-  PYTHONPATH: /home/users/philip.brohan/Projects/Auto-Daily-Rainfall-QC-MO
+  PYTHONPATH: /Users/philip/Projects/Auto-Daily-Rainfall-QC
 
 # Project data path
-  PDIR: /data/scratch/philip.brohan/ADRQ
+  PDIR: /Volumes/Scratch/ADRQ

@@ -89,6 +89,7 @@ def load_rr_match_counts(
     comparison_root,
     year: int,
     session_id: Optional[int] = None,
+    metadata_session_id: Optional[int] = None,
 ) -> List[RRMatchCount]:
     """Return every located RR station-year for ``year`` with its match count.
 
@@ -116,10 +117,19 @@ def load_rr_match_counts(
             "match_metadata.ipynb, assign_ensemble_metadata_parquet)."
         )
 
-    session_clause = (
+    similarity_session_clause = (
         f"{int(session_id)}"
         if session_id is not None
         else f"(SELECT MAX(session_id) FROM read_parquet('{matches_glob}'))"
+    )
+    metadata_session_clause = (
+        f"{int(metadata_session_id)}"
+        if metadata_session_id is not None
+        else (
+            f"(SELECT MAX(match_source_session_id) "
+            f"FROM read_parquet('{metadata_glob}') "
+            f"WHERE match_source_session_id IS NOT NULL)"
+        )
     )
 
     query = f"""
@@ -138,10 +148,10 @@ def load_rr_match_counts(
               ON e.ensemble_vector_id = m.ensemble_vector_id
             JOIN read_parquet('{metadata_glob}') md
               ON md.file_id = e.file_id
-            WHERE m.session_id = {session_clause}
+                        WHERE m.session_id = {similarity_session_clause}
               AND m.query_rank = 1
               AND md.match_type = 'exact'
-              AND md.match_source_session_id = {session_clause}
+                            AND md.match_source_session_id = {metadata_session_clause}
         ),
         agg AS (
             SELECT rr_vector_id,
@@ -245,6 +255,7 @@ def build_figure(
     comparison_root,
     output_path: Optional[Path] = None,
     session_id: Optional[int] = None,
+    metadata_session_id: Optional[int] = None,
     cmap: str = "YlOrRd",
     marker_size: float = 9.0,
 ):
@@ -258,7 +269,10 @@ def build_figure(
     import plotly.graph_objects as go
 
     records = load_rr_match_counts(
-        comparison_root=comparison_root, year=year, session_id=session_id
+        comparison_root=comparison_root,
+        year=year,
+        session_id=session_id,
+        metadata_session_id=metadata_session_id,
     )
     if not records:
         raise SystemExit(f"No located RR reference stations found for year {year}.")
@@ -407,6 +421,15 @@ def parse_args() -> argparse.Namespace:
         help="Similarity session id to use (default: latest)",
     )
     parser.add_argument(
+        "--metadata-session-id",
+        type=int,
+        default=None,
+        help=(
+            "Metadata session id to use for exact-match filtering "
+            "(default: latest match_source_session_id in ensemble_metadata)"
+        ),
+    )
+    parser.add_argument(
         "--output",
         type=Path,
         default=None,
@@ -438,6 +461,7 @@ def main() -> None:
         year=args.year,
         comparison_root=comparison_root,
         session_id=args.session_id,
+        metadata_session_id=args.metadata_session_id,
         output_path=output_path,
         cmap=args.cmap,
     )

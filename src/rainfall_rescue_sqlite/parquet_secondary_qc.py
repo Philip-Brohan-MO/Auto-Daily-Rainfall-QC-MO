@@ -1,20 +1,20 @@
 """Secondary QC check: XGBoost expectation models on Parquet datasets.
 
-Stage two of the second QC check. Two gradient-boosted models are trained on the
-*reliable* station-days (those that passed the first QC check) and then used to
-re-examine the *unreliable* station-days (those that failed it):
+Stage two of the second QC check. Two gradient-boosted models are trained on all
+QC1-assessed station-days (pass and fail) and then used to re-score station-days
+from both primary groups (pass and fail):
 
 * **Model 1** predicts a station's own consensus daily rainfall from its regional
   neighbour statistics (the ``regional_daily_stats`` table).
 * **Model 2** predicts the *absolute error* of model 1 from the same statistics,
   giving a per-row uncertainty.
 
-For a failed station-day the two models yield an expectation range
+For a station-day the two models yield an expectation range
 
     predicted_consensus  ±  k * predicted_error
 
-(computed in a variance-stabilising ``log1p`` space and inverted to inches). A
-failed day whose actual consensus falls inside the range is plausible (secondary
+(computed in a variance-stabilising ``log1p`` space and inverted to inches).
+A day whose actual consensus falls inside the range is plausible (secondary
 flag ``pass``); one that falls outside is genuinely suspect (``fail``). Days with
 no neighbours, or no consensus value, cannot be tested (``indeterminate``).
 
@@ -27,14 +27,14 @@ Design notes
   excluded from training and reported ``indeterminate`` at scoring time.
 * Model 2 is trained on model 1's **out-of-fold** residuals (k-fold), so its
   error estimate is not biased optimistically by model 1's in-sample fit.
-* The range multiplier ``k`` is **calibrated** on a held-out slice of the pass
-  set so that a target fraction (default 0.99) of reliable days fall inside the
-  range.
+* The range multiplier ``k`` is **calibrated** on a held-out slice of the
+    training set so that a target fraction (default 0.99) of those rows fall
+    inside the range.
 
 Artifacts live under ``$PDIR/secondary_qc_parquet``:
 ``models/train_<NNNNNN>/`` (``model1.joblib``, ``model2.joblib``,
 ``metadata.json``), ``secondary_qc_sessions/session_<NNNNNN>.parquet`` and
-``secondary_qc_status/`` (the scored failed days).
+``secondary_qc_status/`` (the scored station-days).
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ class SecondaryQCTrainResult:
 
 @dataclass(frozen=True)
 class SecondaryQCScoreResult:
-    """Summary of a secondary-QC scoring run over the failed station-days."""
+    """Summary of a secondary-QC scoring run over scored station-days."""
 
     train_session_id: int
     qc_session_id: int
@@ -232,12 +232,13 @@ def build_training_frame(
     max_rows: Optional[int] = None,
     seed: int = 0,
 ):
-    """Load the reliable (QC1-pass) station-days as a training DataFrame.
+    """Load QC1-assessed (pass + fail) station-days as a training DataFrame.
 
     Joins ``regional_daily_stats`` to ``daily_qc_status`` on
     ``(file_id, month, day_of_month)`` for the resolved ``qc_session_id``, keeping
-    only rows that **passed** QC1, have at least one 50 km neighbour and a
-    non-NULL consensus value. When ``max_rows`` is set and the pass set is larger,
+    rows with ``final_flag IN ('pass', 'fail')`` that have at least one 50 km
+    neighbour and a non-NULL consensus value. When ``max_rows`` is set and the
+    eligible set is larger,
     a reproducible Bernoulli sample of the right fraction is taken -- uniform
     sampling preserves each month's share, so the result is month-stratified.
 
@@ -250,8 +251,8 @@ def build_training_frame(
     regional_glob = _regional_table_glob(regional_root)
     status_glob = _glob_sql(qc_root / "daily_qc_status")
 
-    where_pass = (
-        f"s.qc_session_id = {qsid} AND s.final_flag = 'pass' "
+    where_assessed = (
+        f"s.qc_session_id = {qsid} AND s.final_flag IN ('pass', 'fail') "
         f"AND r.n_50km > 0 AND r.{TARGET_COLUMN} IS NOT NULL"
     )
     base_from = (
@@ -259,7 +260,7 @@ def build_training_frame(
         f"JOIN read_parquet('{status_glob}') s "
         f"  ON s.file_id = r.file_id AND s.month = r.month "
         f"  AND s.day_of_month = r.day_of_month "
-        f"WHERE {where_pass}"
+        f"WHERE {where_assessed}"
     )
     select_cols = ", ".join(f"r.{c}" for c in FEATURE_COLUMNS) + f", r.{TARGET_COLUMN}"
 
@@ -474,6 +475,7 @@ _SCORE_SCHEMA = pa.schema(
         ("predicted_abs_error", pa.float64()),
         ("expectation_lower", pa.float64()),
         ("expectation_upper", pa.float64()),
+        ("primary_final_flag", pa.string()),
         ("secondary_flag", pa.string()),
         ("train_session_id", pa.int64()),
         ("qc_session_id", pa.int64()),
@@ -494,9 +496,9 @@ def score_secondary_qc(
     end_file_id: Optional[int] = None,
     batch_rows: int = 200_000,
 ) -> SecondaryQCScoreResult:
-    """Score the QC1-failed station-days and write ``secondary_qc_status`` parquet.
+    """Score QC1 pass/fail station-days and write ``secondary_qc_status`` parquet.
 
-    Streams the failed rows (bounded memory), applies the expectation range from
+    Streams the selected rows (bounded memory), applies the expectation range from
     the trained models, and flags each row ``pass`` / ``fail`` / ``indeterminate``.
     Rows with no neighbours (``n_50km = 0``) or no consensus value are
     ``indeterminate``.
@@ -514,7 +516,10 @@ def score_secondary_qc(
     regional_glob = _regional_table_glob(regional_root)
     status_glob = _glob_sql(qc_root / "daily_qc_status")
 
-    clauses = [f"s.qc_session_id = {qsid}", "s.final_flag = 'fail'"]
+    clauses = [
+        f"s.qc_session_id = {qsid}",
+        "s.final_flag IN ('pass', 'fail')",
+    ]
     if start_file_id is not None:
         clauses.append(f"r.file_id >= {int(start_file_id)}")
     if end_file_id is not None:
@@ -522,7 +527,7 @@ def score_secondary_qc(
     where = " AND ".join(clauses)
     feature_select = ", ".join(f"r.{c}" for c in FEATURE_COLUMNS)
     query = (
-        f"SELECT r.file_id, r.matched_year, r.day_of_month, "
+        f"SELECT r.file_id, r.matched_year, r.day_of_month, s.final_flag, "
         f"r.{TARGET_COLUMN}, {feature_select} "
         f"FROM read_parquet('{regional_glob}') r "
         f"JOIN read_parquet('{status_glob}') s "
@@ -580,6 +585,9 @@ def score_secondary_qc(
                     "predicted_abs_error": err_z,
                     "expectation_lower": lower,
                     "expectation_upper": upper,
+                    "primary_final_flag": pa.array(
+                        df["final_flag"].astype(str).to_numpy(), type=pa.string()
+                    ),
                     "secondary_flag": pa.array(flags, type=pa.string()),
                     "train_session_id": np.full(n, train_session_id, dtype=np.int64),
                     "qc_session_id": np.full(n, qsid, dtype=np.int64),

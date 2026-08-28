@@ -2,8 +2,8 @@
 
 Stage one of the second QC check. For every *located* station-day (a station
 with an assigned ``matched_latitude`` / ``matched_longitude`` / ``matched_year``)
-this computes robust neighbour statistics drawn from station-days that **passed**
-the first QC check (``daily_qc_status.final_flag = 'pass'``):
+this computes robust neighbour statistics drawn from station-days that were
+assessed by the first QC check (``daily_qc_status.final_flag IN ('pass','fail')``):
 
 * median of the neighbours' consensus rainfall for the same calendar day,
 * the number of such neighbours, and
@@ -299,8 +299,8 @@ def compute_regional_daily_stats_parquet(
         within memory, since a nationally-scattered file_id shard would
         otherwise buffer hundreds of millions of member-day values at once.
     qc_session_id
-        QC session whose passing station-days form the neighbour pool. Defaults
-        to the latest session in ``daily_qc_status``.
+        QC session whose assessed station-days (pass + fail) form the neighbour
+        pool. Defaults to the latest session in ``daily_qc_status``.
     metadata_session_id
         Metadata (matching) session providing station locations. Defaults to the
         latest ``ensemble_metadata`` session.
@@ -432,11 +432,11 @@ def compute_regional_daily_stats_parquet(
                     SELECT file_id FROM neighbour_files
                 ),
                 {daily_cte},
-                pass_days AS (
+                    assessed_days AS (
                     SELECT file_id, month, day_of_month
                     FROM read_parquet('{status_glob}')
                     WHERE qc_session_id = {qc_session_id}
-                      AND final_flag = 'pass'
+                        AND final_flag IN ('pass', 'fail')
                 ),
                 targets AS (
                     SELECT t.file_id, t.year, d.month, d.day_of_month,
@@ -449,7 +449,7 @@ def compute_regional_daily_stats_parquet(
                            m.lat, m.lon, d.value
                     FROM meta m
                     JOIN daily d USING (file_id)
-                    JOIN pass_days p
+                                        JOIN assessed_days p
                       ON p.file_id = d.file_id
                      AND p.month = d.month
                      AND p.day_of_month = d.day_of_month

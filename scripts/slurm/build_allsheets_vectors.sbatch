@@ -40,10 +40,17 @@ fi
 
 echo "Building ALLSHEETS residual comparison vectors -> ${ALLSHEETS_COMPARISON_PARQUET_ROOT}"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
-run_py scripts/build_allsheets_similarity_vectors.py \
-    --allsheets-dataset-root "${ALLSHEETS_PARQUET_ROOT}" \
-    --source-comparison-root "${COMPARISON_PARQUET_ROOT}" \
-    --allsheets-comparison-root "${ALLSHEETS_COMPARISON_PARQUET_ROOT}" \
-    "${META_ARG[@]}"
+if [[ ${#META_ARG[@]} -gt 0 ]]; then
+    run_py scripts/build_allsheets_similarity_vectors.py \
+        --allsheets-dataset-root "${ALLSHEETS_PARQUET_ROOT}" \
+        --source-comparison-root "${COMPARISON_PARQUET_ROOT}" \
+        --allsheets-comparison-root "${ALLSHEETS_COMPARISON_PARQUET_ROOT}" \
+        "${META_ARG[@]}"
+else
+    run_py scripts/build_allsheets_similarity_vectors.py \
+        --allsheets-dataset-root "${ALLSHEETS_PARQUET_ROOT}" \
+        --source-comparison-root "${COMPARISON_PARQUET_ROOT}" \
+        --allsheets-comparison-root "${ALLSHEETS_COMPARISON_PARQUET_ROOT}"
+fi
 
 echo "ALLSHEETS build complete."

@@ -17,15 +17,15 @@ set_thread_env
 
 cd "${REPO_ROOT}"
 
-KEEP_FLAG=()
-if [[ "${SEFANIM_KEEP_FRAMES}" == "1" ]]; then
-    KEEP_FLAG+=(--keep-frames)
-fi
-
 # The encode stage is data-source agnostic: it ffmpegs the manifest's frames.
 echo "Encoding frames to MP4 from ${SEFANIM_MANIFEST}"
-run_py scripts/render_animation_encode.py \
-    --manifest-path "${SEFANIM_MANIFEST}" \
-    "${KEEP_FLAG[@]}"
+if [[ "${SEFANIM_KEEP_FRAMES}" == "1" ]]; then
+    run_py scripts/render_animation_encode.py \
+        --manifest-path "${SEFANIM_MANIFEST}" \
+        --keep-frames
+else
+    run_py scripts/render_animation_encode.py \
+        --manifest-path "${SEFANIM_MANIFEST}"
+fi
 
 echo "Encode complete."

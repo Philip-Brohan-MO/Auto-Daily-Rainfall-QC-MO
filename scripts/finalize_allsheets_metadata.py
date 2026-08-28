@@ -31,6 +31,7 @@ from src.rainfall_rescue_sqlite.parquet_similarity import (
     default_allsheets_comparison_parquet_root,
     default_comparison_parquet_root,
 )
+from src.rainfall_rescue_sqlite.run_manifest import publish_match_metadata_run_manifest
 
 
 def _latest_metadata_session(comparison_root: Path) -> Path:
@@ -109,6 +110,15 @@ def main() -> None:
     print(f"    ALLSHEETS w/ coords  : {combined.allsheets_with_coords:,}")
     print(f"    DATA approximate     : {combined.data_approximate:,}")
     print(f"    unmatched            : {combined.unmatched:,}")
+
+    manifest_path = publish_match_metadata_run_manifest(
+        comparison_root=source_comparison_root,
+        session_id=combined.session_id,
+        ensemble_metadata_path=combined.output_path,
+        data_metadata_input_path=data_metadata_path,
+        allsheets_metadata_input_path=allsheets_result.output_path,
+    )
+    print(f"Step 3: published run manifest -> {manifest_path}")
 
 
 if __name__ == "__main__":

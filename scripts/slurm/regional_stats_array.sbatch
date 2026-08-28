@@ -38,11 +38,29 @@ trap 'rm -rf "${DUCKDB_TEMP_DIR}"' EXIT
 
 echo "Regional-stats shard ${SLURM_ARRAY_TASK_ID}/${REGIONAL_NUM_SHARDS}: targets partitioned from ${REGIONAL_TOTAL_FILE_IDS} file_ids"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
-run_py scripts/run_regional_stats_shard.py \
-    --shard-dir "${REGIONAL_SHARD_DIR}" \
-    --consensus-root "${CONSENSUS_ROOT}" \
-    --num-shards "${REGIONAL_NUM_SHARDS}" \
-    --shard-index "${SLURM_ARRAY_TASK_ID}" \
+REGIONAL_META_ARG=()
+if [[ -n "${METADATA_SESSION_ID}" ]]; then
+    REGIONAL_META_ARG=(--metadata-session-id "${METADATA_SESSION_ID}")
+fi
+REGIONAL_QC_ARG=()
+if [[ -n "${QC_SESSION_ID}" ]]; then
+    REGIONAL_QC_ARG=(--qc-session-id "${QC_SESSION_ID}")
+fi
+
+cmd=(
+    scripts/run_regional_stats_shard.py
+    --shard-dir "${REGIONAL_SHARD_DIR}"
+    --consensus-root "${CONSENSUS_ROOT}"
+    --num-shards "${REGIONAL_NUM_SHARDS}"
+    --shard-index "${SLURM_ARRAY_TASK_ID}"
     --total-file-ids "${REGIONAL_TOTAL_FILE_IDS}"
+)
+if [[ ${#REGIONAL_META_ARG[@]} -gt 0 ]]; then
+    cmd+=("${REGIONAL_META_ARG[@]}")
+fi
+if [[ ${#REGIONAL_QC_ARG[@]} -gt 0 ]]; then
+    cmd+=("${REGIONAL_QC_ARG[@]}")
+fi
+run_py "${cmd[@]}"
 
 echo "Regional-stats shard ${SLURM_ARRAY_TASK_ID} complete."

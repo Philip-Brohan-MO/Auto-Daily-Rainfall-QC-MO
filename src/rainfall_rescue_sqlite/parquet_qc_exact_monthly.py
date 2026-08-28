@@ -86,6 +86,25 @@ def _resolve_similarity_session_id(comparison_root: Path, explicit: Optional[int
     return int(value)
 
 
+def _resolve_metadata_session_id(comparison_root: Path, explicit: Optional[int]) -> int:
+    if explicit is not None:
+        return int(explicit)
+    conn = _connect()
+    try:
+        value = conn.execute(
+            f"""
+            SELECT MAX(match_source_session_id)
+            FROM read_parquet('{_glob_sql(comparison_root / 'ensemble_metadata')}')
+            WHERE match_source_session_id IS NOT NULL
+            """
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    if value is None:
+        raise ValueError("No metadata sessions found in comparison dataset")
+    return int(value)
+
+
 def _next_qc_session_id(qc_root: Path) -> int:
     sessions_dir = qc_root / "qc_sessions"
     if not sessions_dir.exists():
@@ -100,12 +119,17 @@ def _next_qc_session_id(qc_root: Path) -> int:
     return max(ids) + 1 if ids else 1
 
 
-def _file_filter_sql(start_file_id: Optional[int], end_file_id: Optional[int]) -> str:
+def _file_filter_sql(
+    start_file_id: Optional[int],
+    end_file_id: Optional[int],
+    *,
+    file_id_column: str = "file_id",
+) -> str:
     clauses: List[str] = []
     if start_file_id is not None:
-        clauses.append(f"file_id >= {int(start_file_id)}")
+        clauses.append(f"{file_id_column} >= {int(start_file_id)}")
     if end_file_id is not None:
-        clauses.append(f"file_id <= {int(end_file_id)}")
+        clauses.append(f"{file_id_column} <= {int(end_file_id)}")
     if not clauses:
         return ""
     return " AND " + " AND ".join(clauses)
@@ -116,6 +140,7 @@ def _load_rr_monthlies_for_exact_files(
     comparison_root: Path,
     rr_dataset_root: Path,
     similarity_session_id: int,
+    metadata_session_id: int,
     start_file_id: Optional[int],
     end_file_id: Optional[int],
 ) -> Dict[int, Dict[int, Optional[float]]]:
@@ -124,10 +149,14 @@ def _load_rr_monthlies_for_exact_files(
         rows = conn.execute(
             f"""
             SELECT
-                CAST(REPLACE(sm.ensemble_vector_id, 'ensemble_file::', '') AS BIGINT) AS file_id,
+                                CAST(e.file_id AS BIGINT) AS file_id,
                 rm.month,
                 rm.rainfall_in
             FROM read_parquet('{_glob_sql(comparison_root / 'similarity_matches')}') sm
+                        JOIN read_parquet('{_glob_sql(comparison_root / 'ensemble_consensus_vectors')}') e
+                            ON e.ensemble_vector_id = sm.ensemble_vector_id
+                        JOIN read_parquet('{_glob_sql(comparison_root / 'ensemble_metadata')}') md
+                            ON md.file_id = e.file_id
             JOIN read_parquet('{_glob_sql(comparison_root / 'rr_monthly_vectors')}') rv
               ON rv.rr_vector_id = sm.rr_vector_id
             LEFT JOIN read_parquet('{_glob_sql(rr_dataset_root / 'monthly_rainfall')}') rm
@@ -135,8 +164,9 @@ def _load_rr_monthlies_for_exact_files(
              AND rm.year = rv.year
             WHERE sm.session_id = {int(similarity_session_id)}
               AND sm.query_rank = 1
-              AND sm.exact_agreement_count >= 9
-              {_file_filter_sql(start_file_id, end_file_id)}
+                            AND md.match_type = 'exact'
+                            AND md.match_source_session_id = {int(metadata_session_id)}
+                            {_file_filter_sql(start_file_id, end_file_id, file_id_column='e.file_id')}
             """
         ).fetchall()
     finally:
@@ -250,6 +280,7 @@ def _compute_rows(
     comparison_root: Path,
     rr_dataset_root: Path,
     similarity_session_id: int,
+    metadata_session_id: int,
     tolerance: float,
     start_file_id: Optional[int],
     end_file_id: Optional[int],
@@ -258,6 +289,7 @@ def _compute_rows(
         comparison_root=comparison_root,
         rr_dataset_root=rr_dataset_root,
         similarity_session_id=similarity_session_id,
+        metadata_session_id=metadata_session_id,
         start_file_id=start_file_id,
         end_file_id=end_file_id,
     )
@@ -458,11 +490,13 @@ def run_exact_monthly_consistency_check_parquet(
     tolerance: float = 0.01,
     qc_session_id: Optional[int] = None,
     similarity_session_id: Optional[int] = None,
+    metadata_session_id: Optional[int] = None,
     start_file_id: Optional[int] = None,
     end_file_id: Optional[int] = None,
     promotion_threshold: float = 0.95,
 ) -> ExactMonthlyQCResult:
     similarity_session_id = _resolve_similarity_session_id(comparison_root, similarity_session_id)
+    metadata_session_id = _resolve_metadata_session_id(comparison_root, metadata_session_id)
     qc_root.mkdir(parents=True, exist_ok=True)
     if qc_session_id is None:
         qc_session_id = _next_qc_session_id(qc_root)
@@ -473,6 +507,7 @@ def run_exact_monthly_consistency_check_parquet(
         comparison_root=comparison_root,
         rr_dataset_root=rr_dataset_root,
         similarity_session_id=similarity_session_id,
+        metadata_session_id=metadata_session_id,
         tolerance=tolerance,
         start_file_id=start_file_id,
         end_file_id=end_file_id,
@@ -493,6 +528,7 @@ def run_exact_monthly_consistency_check_parquet(
             "check_version": CHECK_VERSION,
             "tolerance": tolerance,
             "similarity_session_id": similarity_session_id,
+            "metadata_session_id": metadata_session_id,
             "start_file_id": start_file_id,
             "end_file_id": end_file_id,
         },
@@ -525,15 +561,18 @@ def run_exact_monthly_consistency_shard_parquet(
     tolerance: float,
     shard_output_path: Path,
     similarity_session_id: Optional[int],
+    metadata_session_id: Optional[int],
     start_file_id: int,
     end_file_id: int,
 ) -> ExactMonthlyQCResult:
     similarity_session_id = _resolve_similarity_session_id(comparison_root, similarity_session_id)
+    metadata_session_id = _resolve_metadata_session_id(comparison_root, metadata_session_id)
     rows, files_processed, day_rows_written, pass_rows, fail_rows, exact_files_seen, non_exact_files_seen = _compute_rows(
         ensemble_dataset_root=ensemble_dataset_root,
         comparison_root=comparison_root,
         rr_dataset_root=rr_dataset_root,
         similarity_session_id=similarity_session_id,
+        metadata_session_id=metadata_session_id,
         tolerance=tolerance,
         start_file_id=start_file_id,
         end_file_id=end_file_id,
@@ -559,6 +598,7 @@ def merge_exact_monthly_qc_shards_parquet(
     shard_paths: Sequence[Path],
     tolerance: float,
     similarity_session_id: Optional[int],
+    metadata_session_id: Optional[int],
     num_shards: Optional[int] = None,
     promotion_threshold: float = 0.95,
 ) -> ExactMonthlyQCResult:
@@ -656,6 +696,7 @@ def merge_exact_monthly_qc_shards_parquet(
             "check_version": CHECK_VERSION,
             "tolerance": tolerance,
             "similarity_session_id": similarity_session_id,
+            "metadata_session_id": metadata_session_id,
             "shards": len(shard_paths),
         },
         promotion_threshold=promotion_threshold,

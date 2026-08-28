@@ -2,8 +2,8 @@
 """Interactive map of secondary-QC status for one date.
 
 This is the QC-check-2 stage-2 companion to ``plot_daily_qc_interactive.py``. For
-a given calendar date ``YYYY-MM-DD`` it draws every scored (QC1-fail) target
-station-day on a map of the UK, coloured by its ``secondary_flag``:
+a given calendar date ``YYYY-MM-DD`` it draws every scored (QC1 pass/fail)
+target station-day on a map of the UK, coloured by its ``secondary_flag``:
 
 * ``pass``          -- the transcribed consensus falls inside the expectation
   range predicted from the station's regional neighbour statistics,
@@ -289,7 +289,7 @@ def build_figure(
     fig.update_layout(
         title=(
             f"Secondary-QC status  {target_date.isoformat()}<br>"
-            f"<sup>{len(records)} scored QC1-fail stations "
+            f"<sup>{len(records)} scored stations "
             f"(click a point to copy its source specifier)</sup>"
         ),
         width=800,

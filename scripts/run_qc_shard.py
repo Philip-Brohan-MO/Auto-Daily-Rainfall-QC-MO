@@ -49,6 +49,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--comparison-root", type=Path, default=None)
     parser.add_argument("--rr-dataset-root", type=Path, default=None)
     parser.add_argument("--similarity-session-id", type=int, default=None)
+    parser.add_argument("--metadata-session-id", type=int, default=None)
     parser.add_argument(
         "--shard-dir",
         type=Path,
@@ -133,6 +134,7 @@ def main() -> None:
             tolerance=args.tolerance,
             shard_output_path=shard_output_path,
             similarity_session_id=args.similarity_session_id,
+            metadata_session_id=args.metadata_session_id,
             start_file_id=start_file_id,
             end_file_id=end_file_id,
         )

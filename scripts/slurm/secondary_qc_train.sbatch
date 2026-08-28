@@ -34,10 +34,21 @@ trap 'rm -rf "${DUCKDB_TEMP_DIR}"' EXIT
 
 echo "Secondary-QC training: max_rows=${SECONDARY_MAX_TRAIN_ROWS}, coverage=${SECONDARY_COVERAGE_TARGET}"
 echo "  DuckDB memory_limit=${DUCKDB_MEMORY_LIMIT}, temp_directory=${DUCKDB_TEMP_DIR}"
-run_py scripts/train_secondary_qc_models.py \
-    --secondary-qc-root "${SECONDARY_QC_ROOT}" \
-    --max-rows "${SECONDARY_MAX_TRAIN_ROWS}" \
-    --coverage-target "${SECONDARY_COVERAGE_TARGET}" \
+SECONDARY_QC_SESSION_ARG=()
+if [[ -n "${QC_SESSION_ID}" ]]; then
+    SECONDARY_QC_SESSION_ARG=(--qc-session-id "${QC_SESSION_ID}")
+fi
+
+cmd=(
+    scripts/train_secondary_qc_models.py
+    --secondary-qc-root "${SECONDARY_QC_ROOT}"
+    --max-rows "${SECONDARY_MAX_TRAIN_ROWS}"
+    --coverage-target "${SECONDARY_COVERAGE_TARGET}"
     --seed "${SECONDARY_SEED}"
+)
+if [[ ${#SECONDARY_QC_SESSION_ARG[@]} -gt 0 ]]; then
+    cmd+=("${SECONDARY_QC_SESSION_ARG[@]}")
+fi
+run_py "${cmd[@]}"
 
 echo "Secondary-QC training complete."
