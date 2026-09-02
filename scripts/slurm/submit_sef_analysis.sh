@@ -41,9 +41,18 @@ if [[ "${NUM_YEARS}" -eq 0 ]]; then
 fi
 ARRAY_MAX=$(( NUM_YEARS - 1 ))
 
+# Dense SEF years (e.g. 1908-era outputs) can be large enough to blow the old
+# 8 GB default when a single year's observations are materialised in memory.
+# Keep the safer default explicit here, while still allowing an override at the
+# environment invocation site.
+export SEFSTATS_MEM_MB="${SEFSTATS_MEM_MB:-16000}"
+export SEFSTATS_TIME_MIN="${SEFSTATS_TIME_MIN:-60}"
+
 EXPORTS="ALL,RQC_SLURM_DIR=${SCRIPT_DIR}"
 EXPORTS="${EXPORTS},SEFSTATS_ROOT=${SEFSTATS_ROOT}"
 EXPORTS="${EXPORTS},SEFSTATS_SEF_ROOT=${SEFSTATS_SEF_ROOT}"
+EXPORTS="${EXPORTS},SEFSTATS_MEM_MB=${SEFSTATS_MEM_MB}"
+EXPORTS="${EXPORTS},SEFSTATS_TIME_MIN=${SEFSTATS_TIME_MIN}"
 EXPORTS="${EXPORTS},PDIR=${PDIR}"
 
 ARRAY_RES="--qos=${SLURM_QOS} --ntasks=${SEFSTATS_CORES} --ntasks-per-core=1 --mem=${SEFSTATS_MEM_MB} --time=${SEFSTATS_TIME_MIN}"

@@ -496,7 +496,7 @@ def export_sef(
     link: str = DEFAULT_LINK,
     obs_hour: int = DEFAULT_OBS_HOUR,
     obs_minute: int = DEFAULT_OBS_MINUTE,
-    batch_rows: int = 200_000,
+    batch_rows: int = 50_000,
 ) -> SEFExportResult:
     """Write one merged SEF ``.tsv`` per real station-year for a year slice.
 

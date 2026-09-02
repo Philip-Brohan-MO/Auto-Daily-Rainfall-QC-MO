@@ -277,17 +277,20 @@ export SECONDARY_SCORE_TIME_MIN="${SECONDARY_SCORE_TIME_MIN:-60}"
 # Refresh SEF_MIN_YEAR / SEF_MAX_YEAR with the min/max matched_year in
 # ensemble_metadata (safe defaults cover the Rainfall Rescue coverage span).
 export SEF_OUTPUT_ROOT="${SEF_OUTPUT_ROOT:-${PDIR}/sef_export}"
-export SEF_NUM_SHARDS="${SEF_NUM_SHARDS:-100}"
+# Dense late-era years can OOM with too-large per-slice batches, so prefer finer
+# sharding and a smaller in-flight row batch.
+export SEF_NUM_SHARDS="${SEF_NUM_SHARDS:-200}"
 export SEF_MIN_YEAR="${SEF_MIN_YEAR:-1677}"
 export SEF_MAX_YEAR="${SEF_MAX_YEAR:-1980}"
 # SEF header provenance and the daily observation hour (UK rainfall day ends 09:00).
 export SEF_SOURCE="${SEF_SOURCE:-UK Daily Rainfall Registers}"
 export SEF_LINK="${SEF_LINK:-https://brohan.org/Auto-Daily-Rainfall-QC/}"
 export SEF_OBS_HOUR="${SEF_OBS_HOUR:-9}"
+export SEF_BATCH_ROWS="${SEF_BATCH_ROWS:-50000}"
 
 export SEF_CORES="${SEF_CORES:-1}"
-export SEF_MEM_MB="${SEF_MEM_MB:-8000}"
-export SEF_TIME_MIN="${SEF_TIME_MIN:-30}"
+export SEF_MEM_MB="${SEF_MEM_MB:-16000}"
+export SEF_TIME_MIN="${SEF_TIME_MIN:-60}"
 
 # --- SEF rainfall animation pipeline ------------------------------------
 # Interpolated daily-rainfall map animation built from the exported SEF .tsv
@@ -349,10 +352,11 @@ export SEFSTATS_ROOT="${SEFSTATS_ROOT:-${PDIR}/sef_analysis}"
 export SEFSTATS_SEF_ROOT="${SEFSTATS_SEF_ROOT:-${SEF_OUTPUT_ROOT}}"
 
 # Per-task resources. A task holds one year of observations in memory before
-# writing; the busiest year (~9k station files) is the sizing case.
+# writing; the busiest year (~9k station files) is the sizing case. Give each
+# year enough headroom to avoid OOMs on dense 1900s slices.
 export SEFSTATS_CORES="${SEFSTATS_CORES:-1}"
-export SEFSTATS_MEM_MB="${SEFSTATS_MEM_MB:-8000}"
-export SEFSTATS_TIME_MIN="${SEFSTATS_TIME_MIN:-30}"
+export SEFSTATS_MEM_MB="${SEFSTATS_MEM_MB:-16000}"
+export SEFSTATS_TIME_MIN="${SEFSTATS_TIME_MIN:-60}"
 
 # --- ALLSHEETS residual matching (second matching pass) ------------------
 # After the DATA pipeline (submit_all.sh) and its metadata assignment, every

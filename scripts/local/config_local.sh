@@ -10,9 +10,18 @@
 # file runs right after scripts/slurm/config.sh specifically to override its
 # cluster-only REPO_ROOT/CONDA_ENV_PREFIX, which would otherwise already be set.
 export REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# Mac conda env is a plain named env (see environments/ADRQ_mac.yml), not a
-# shared-disc prefix, but conda run -p also accepts an env's own directory.
-export CONDA_ENV_PREFIX="${LOCAL_CONDA_ENV_PREFIX:-$HOME/miniconda3/envs/ADRQ}"
+# Resolve the ADRQ environment to the default location for the host OS instead of
+# assuming a Mac Miniconda install. On Linux this is the shared /data location;
+# on macOS it is the standard ~/miniconda3/envs/ADRQ path.
+if [[ -n "${LOCAL_CONDA_ENV_PREFIX:-}" ]]; then
+    export CONDA_ENV_PREFIX="${LOCAL_CONDA_ENV_PREFIX}"
+elif [[ -d "${HOME}/miniconda3/envs/ADRQ" ]]; then
+    export CONDA_ENV_PREFIX="${HOME}/miniconda3/envs/ADRQ"
+elif [[ -n "${CONDA_PREFIX:-}" ]]; then
+    export CONDA_ENV_PREFIX="${CONDA_PREFIX}"
+else
+    export CONDA_ENV_PREFIX="/data/users/philip.brohan/conda/environments/ADRQ"
+fi
 
 : "${PDIR:?PDIR must be set before sourcing config_local.sh (see docs/installation.md)}"
 
