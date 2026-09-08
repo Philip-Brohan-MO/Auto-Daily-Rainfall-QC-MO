@@ -3,11 +3,11 @@
 This project is designed to be reproduced and extended. Everything — code,
 notebooks, environment specification, and this documentation — lives in a single
 Git repository:
-[github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO).
+[github.com/Philip-Brohan/Auto-Daily-Rainfall-QC](https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC).
 
 If you are familiar with GitHub, fork or clone the repository. If you'd rather
 not, you can download the whole thing as a
-[zip file](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/archive/refs/heads/main.zip).
+[zip file](https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC/archive/refs/heads/main.zip).
 
 ## Software environment
 
@@ -41,9 +41,12 @@ links to each notebook.
 ## The documentation
 
 These web pages are built with [Sphinx](https://www.sphinx-doc.org/) from the
-Markdown sources in the `docs/` directory, and published to
-[GitHub Pages](https://pages.github.com/) automatically on every push to `main`
-by the workflow in `.github/workflows/docs.yml`. To build them locally:
+Markdown sources in the `docs/` directory.
+
+This repository currently documents the local Sphinx build flow. If a GitHub
+Pages CI workflow is added in future, document it explicitly in this section.
+
+To build the pages locally:
 
 ```bash
 pip install sphinx myst-parser
@@ -56,22 +59,6 @@ or, from inside the `docs/` directory with the `ADRQ` environment active:
 make html
 ```
 
-## Credits and acknowledgements
-
-This is the quality-control follow-on to
-[Auto Daily Rainfall](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-MO),
-which established the small-VLM ensemble approach that produced the daily
-transcriptions quality-controlled here.
-
-The monthly rainfall records that anchor every station's location and metadata
-come from [Ed Hawkins](https://climatelabbook.substack.com/p/rainfall-rescue-5-years-on)'s
-[Rainfall Rescue](https://github.com/ed-hawkins/rainfall-rescue) project and its
-army of volunteer transcribers.
-
-## Contact
-
-- [Raise an issue](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/issues/new)
-- Contact [Philip Brohan](mailto:philip.brohan@metoffice.gov.uk)
 
 This document is distributed under the terms of the
 [Open Government Licence](https://www.nationalarchives.gov.uk/doc/open-government-licence/version/2/).

@@ -7,7 +7,7 @@ the community standard for rescued climate data.
 
 One notebook:
 
-- [export_sef.ipynb](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/export_sef.ipynb)
+- [export_sef.ipynb](https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC/blob/main/notebooks/export_sef.ipynb)
 
 ## What SEF is
 
@@ -15,12 +15,25 @@ SEF is a simple tab-separated text format where **one file holds one variable
 from one station**. Here each file is a single *station-year* of daily rainfall:
 twelve header lines of metadata, a column header, then one line per observed day.
 
-## Only exact matches are exported
+### Example SEF file
 
-Only station-years with an **exact** metadata match — a confirmed location name
-and coordinates — are written to SEF. Approximate matches (a centroid position
-inferred from the top-ranked candidates but no confirmed name) are **not**
-trustworthy enough to ship and are dropped entirely; they never reach a SEF file.
+To keep this page readable, only the first few lines are shown inline.
+
+[View the full example file (385 lines)](../_static/examples/DRain_1911-1920_RainNos_Kent_F-P-210.tsv)
+
+```{literalinclude} ../_static/examples/DRain_1911-1920_RainNos_Kent_F-P-210.tsv
+:language: text
+:lines: 1-20
+```
+
+## Only exact-coordinate matches are exported
+
+Only station-years with an exact-coordinate metadata match are written to SEF.
+That includes exact matches from the primary RR-DATA run and exact matches
+recovered by the residual RR ALLSHEETS run. Approximate matches (a centroid
+position inferred from the top-ranked candidates but no confirmed name) are
+**not** trustworthy enough to ship and are dropped entirely; they never reach a
+SEF file.
 
 ## Merging the ensemble's duplicates
 
@@ -33,8 +46,7 @@ For every day the value is taken from the duplicate with the **best QC verdict**
 using this precedence so no day is dropped:
 
 ```text
-qc1=pass  >  qc1=fail & qc2=pass  >  qc1=review
-          >  qc1=fail & qc2=indeterminate  >  the rest
+qc1=pass  >  qc1=fail & qc2=pass  >  qc1=fail & qc2=indeterminate  >  the rest
 ```
 
 Each observation is the consensus daily total (the member median), **converted
@@ -64,5 +76,9 @@ year range, and the SEF metadata fields (`SEF_SOURCE`, `SEF_LINK`,
 `scripts/slurm/config.sh`. The prerequisites are the daily-consensus table and
 the assigned ensemble metadata; the QC tables are joined when present. Files land
 in `$PDIR/sef_export/tsv/<year>/<ID>.tsv` with per-shard manifests alongside.
+
+## Sharing the results
+
+The exported SEF files are available [from zenodo](https://doi.org/10.5281/zenodo.21905160) - 201,149 SEF files, each containing 1 station-year of data. 73,469,432 daily rainfall observations from 13,540 distinct weather stations.
 
 Next: [Analysis](analysis.md).

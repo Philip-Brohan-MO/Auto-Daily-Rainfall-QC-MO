@@ -7,8 +7,8 @@ queries with [DuckDB](https://duckdb.org/).
 
 Two notebooks:
 
-- [RR_data_ingest.ipynb](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/RR_data_ingest.ipynb)
-- [Daily_transcriptions_ingest.ipynb](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/Daily_transcriptions_ingest.ipynb)
+- [RR_data_ingest.ipynb](https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC/blob/main/notebooks/RR_data_ingest.ipynb)
+- [Daily_transcriptions_ingest.ipynb](https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC/blob/main/notebooks/Daily_transcriptions_ingest.ipynb)
 
 ## The two data sources
 
@@ -19,14 +19,14 @@ The pipeline joins together two independent datasets:
   Crucially, these records already carry **station names, coordinates, and other
   metadata**. They are the anchor we use to locate the daily transcriptions.
 - **Daily ensemble transcriptions** — the output of the parent
-  [Auto Daily Rainfall](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-MO)
+  [Auto Daily Rainfall](https://brohan.org/Auto-Daily-Rainfall/)
   project: one JSON file per station-year image, holding keys `Day 1` … `Day 31`
   plus a `Totals` block, with **five ensemble-member values** for every day and
   month slot.
 
 ## Rainfall Rescue monthly data
 
-The [RR_data_ingest](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/RR_data_ingest.ipynb)
+The [RR_data_ingest](https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC/blob/main/notebooks/RR_data_ingest.ipynb)
 notebook clones the Rainfall Rescue data from GitHub and ingests the combined
 station CSV files into a Parquet dataset for fast DuckDB processing. It then
 draws an interactive map of every station's location for a chosen year and month,
@@ -37,7 +37,7 @@ needed.
 
 ## Daily ensemble transcriptions
 
-The [Daily_transcriptions_ingest](https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO/blob/main/notebooks/Daily_transcriptions_ingest.ipynb)
+The [Daily_transcriptions_ingest](https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC/blob/main/notebooks/Daily_transcriptions_ingest.ipynb)
 notebook rebuilds the ensemble Parquet dataset from the JSON transcription files.
 The in-process rebuild shown first is fine for smoke tests, but the full dataset
 is far too large for one Python process.
@@ -77,4 +77,4 @@ every shard has succeeded. Shard count, an optional file cap for testing, and th
 per-job resources are all set in `scripts/slurm/config.sh`. See the
 [SLURM reference](../reference/slurm.md) for how to monitor jobs.
 
-Next: [Matching](matching.md).
+Next: [Transcription QC](transcription-qc.md).

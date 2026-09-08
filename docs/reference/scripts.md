@@ -16,10 +16,13 @@ these for its shard.
 | `build_rainfall_rescue_parquet.py` | Ingestion | Rainfall Rescue CSV → Parquet |
 | `build_ensemble_transcriptions_parquet.py` | Ingestion | Ensemble JSON → Parquet |
 | `run_ensemble_ingest_shard.py` / `merge_ensemble_shards.py` | Ingestion | Sharded ensemble ingest and merge |
+| `run_transcription_qc_shard.py` / `merge_transcription_qc_shards.py` | Transcription QC | Sharded transcription-quality checks and merge |
 | `build_similarity_vectors.py` | Matching | Build the normalised comparison vectors |
+| `build_allsheets_similarity_vectors.py` | Matching | Build comparison vectors for RR ALLSHEETS residual matching |
 | `run_similarity_shard.py` / `merge_similarity_shards.py` | Matching | Sharded matching and merge |
 | `run_monthly_similarity_baseline.py` | Matching | Baseline similarity scoring |
 | `assign_ensemble_metadata.py` | Matching | Copy RR metadata onto matched records |
+| `finalize_allsheets_metadata.py` | Matching | Finalize metadata after residual ALLSHEETS matching |
 | `run_qc_check_exact_monthly.py` / `run_qc_shard.py` / `merge_qc_shards.py` | QC1 | Monthly-total check, sharded, and merge |
 | `run_daily_consensus_shard.py` / `merge_daily_consensus_shards.py` | QC2 | Build the daily-consensus table |
 | `run_regional_stats_shard.py` / `merge_regional_stats_shards.py` | QC2 | Regional neighbour statistics |
@@ -37,7 +40,9 @@ Each pipeline has a `submit_*.sh` driver that sources `config.sh` and submits th
 | Driver | `.sbatch` files | Shape |
 |--------|-----------------|-------|
 | `submit_ensemble_ingest.sh` | `ingest_ensemble_array`, `merge_ensemble_shards` | array + merge |
+| `submit_transcription_qc.sh` | `transcription_qc_array`, `transcription_qc_merge` | array + merge |
 | `submit_all.sh` | `build_vectors`, `match_array`, `merge_shards` | build + array + merge |
+| `submit_allsheets.sh` | `build_allsheets_vectors`, `match_allsheets_array`, `merge_allsheets_shards`, `finalize_allsheets_metadata` | 4-stage residual match |
 | `submit_qc.sh` | `qc_array`, `qc_merge` | array + merge |
 | `submit_daily_consensus.sh` | `daily_consensus_array`, `daily_consensus_merge` | array + merge |
 | `submit_regional_stats.sh` | `regional_stats_array`, `regional_stats_merge` | array + merge |

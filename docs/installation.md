@@ -16,7 +16,7 @@ reading and running the workflow notebooks.
 ## 1 — Clone the repository
 
 ```bash
-git clone https://github.com/Philip-Brohan-MO/Auto-Daily-Rainfall-QC-MO.git
+git clone https://github.com/Philip-Brohan/Auto-Daily-Rainfall-QC.git
 cd Auto-Daily-Rainfall-QC-MO
 ```
 
@@ -42,7 +42,7 @@ The environment file sets two variables that the code relies on:
 
 - `PYTHONPATH` — the repository root, so the project modules import cleanly.
 - `PDIR` — the data directory that holds the Parquet datasets and all SLURM shard
-  outputs (defaults to `/data/scratch/philip.brohan/ADRQ`).
+  outputs (Set this to a scratch directory with plenty of disc space).
 
 Edit these in `environments/ADRQ.yml` (or export them in your shell) to match
 your own installation. The SLURM jobs read the same values from
