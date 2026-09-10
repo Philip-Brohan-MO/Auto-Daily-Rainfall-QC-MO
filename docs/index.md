@@ -65,7 +65,7 @@ together; the pages under it walk through each stage.
  - [73 million England and Wales daily-rainfall observations, ready for use.](https://doi.org/10.5281/zenodo.21905160)
  - [Video of England and Wales rainfall, 1871-1960.](https://vimeo.com/1223307103)
 
-## Authors and acknowledgements
+## Credits
 
 - [Authors and acknowledgements](credits.md)
 
